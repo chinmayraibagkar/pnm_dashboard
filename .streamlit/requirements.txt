@@ -1,0 +1,15 @@
+streamlit
+google-auth
+google-analytics-data
+pandas
+google-ads
+requests
+numpy
+plotly
+google-analytics
+re
+tempfile
+time
+json
+datetime
+io

@@ -7,9 +7,3 @@ requests
 numpy
 plotly
 google-analytics
-re
-tempfile
-time
-json
-datetime
-io

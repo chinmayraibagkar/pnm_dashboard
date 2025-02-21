@@ -562,7 +562,7 @@ def map_meta_conversions(df_filtered, meta_ads_data):
         return meta_ads_data
 
 
-@st.cache_data(ttl=86400)  # Cache for 1 day
+@st.cache_data  # Cache for 1 day
 def map_salesforce_data(df_filtered, salesforce_data):
     if salesforce_data is not None:
         # Convert mobile to string
@@ -637,196 +637,207 @@ def main():
         else:
             st.session_state.salesforce_data = None
 
-    if start_date <= end_date:
-        start_date_str = start_date.strftime('%Y-%m-%d')
-        end_date_str = end_date.strftime('%Y-%m-%d')
-        
-        # Show loading spinner
-        if 'processed_GA_data' not in st.session_state:
-            with st.spinner('Fetching data...'):
-                st.session_state.Google_ads_data = get_google_ads_data(Ads_client, st.secrets['google_ads']['customer_id'], start_date_str, end_date_str)
-                st.session_state.Meta_ads_data = get_facebook_data(start_date_str, end_date_str)
-                st.session_state.GA_data = fetch_ga4_data(GA_client, start_date_str, end_date_str)
-                st.session_state.processed_GA_data = GA4_data_preprocessing(st.session_state.GA_data, GA_client, start_date_str, end_date_str)
+    if st.session_state.salesforce_data is not None:
+        if start_date <= end_date:
+            start_date_str = start_date.strftime('%Y-%m-%d')
+            end_date_str = end_date.strftime('%Y-%m-%d')
+            
+            # Show loading spinner
+            if 'processed_GA_data' not in st.session_state:
+                with st.spinner('Fetching data...'):
+                    st.session_state.Google_ads_data = get_google_ads_data(Ads_client, st.secrets['google_ads']['customer_id'], start_date_str, end_date_str)
+                    st.session_state.Meta_ads_data = get_facebook_data(start_date_str, end_date_str)
+                    st.session_state.GA_data = fetch_ga4_data(GA_client, start_date_str, end_date_str)
+                    st.session_state.processed_GA_data = GA4_data_preprocessing(st.session_state.GA_data, GA_client, start_date_str, end_date_str)
 
-    df_filtered = st.session_state.processed_GA_data.copy()
-    salesforce_data = st.session_state.salesforce_data.copy()
-    google_ads_data = st.session_state.Google_ads_data.copy()
-    meta_ads_data = st.session_state.Meta_ads_data.copy()
+        df_filtered = st.session_state.processed_GA_data.copy()
+        salesforce_data = st.session_state.salesforce_data.copy()
+        google_ads_data = st.session_state.Google_ads_data.copy()
+        meta_ads_data = st.session_state.Meta_ads_data.copy()
 
-    salesforce_data = salesforce_data[['House Shifting Opportunity: Created Date', 'Mobile', 'Status', 'Shifting Type']]
-    google_ads_data = google_ads_data[google_ads_data['Campaign Name'].str.contains('packer', case=False, na=False)]
-    meta_ads_data = meta_ads_data[meta_ads_data['campaign_name'].str.contains('pnm', case=False, na=False)]
-    meta_ads_data = meta_ads_data.rename(columns={'date_stop': 'Date'})
+        salesforce_data = salesforce_data[['House Shifting Opportunity: Created Date', 'Mobile', 'Status', 'Shifting Type']]
+        google_ads_data = google_ads_data[google_ads_data['Campaign Name'].str.contains('packer', case=False, na=False)]
+        meta_ads_data = meta_ads_data[meta_ads_data['campaign_name'].str.contains('pnm', case=False, na=False)]
+        meta_ads_data = meta_ads_data.rename(columns={'date_stop': 'Date'})
 
-    if st.checkbox("Show Raw Data"):
-        st.header("Raw Data")
+        if st.checkbox("Show Raw Data"):
+            st.header("Raw Data")
 
-        st.subheader("Salesforce Data")
-        st.dataframe(salesforce_data)
+            st.subheader("Salesforce Data")
+            st.dataframe(salesforce_data)
 
-        st.subheader("Google Ads Data")
-        st.dataframe(google_ads_data)
+            st.subheader("Google Ads Data")
+            st.dataframe(google_ads_data)
 
-        st.subheader("Meta Ads Data")
-        st.dataframe(meta_ads_data)
+            st.subheader("Meta Ads Data")
+            st.dataframe(meta_ads_data)
 
-        st.subheader("GA4 Data")
-        st.dataframe(df_filtered)
+            st.subheader("GA4 Data")
+            st.dataframe(df_filtered)
 
-    if df_filtered is not None:
-        df_filtered = map_salesforce_data(df_filtered, salesforce_data)
-        google_final_raw = map_google_leads(df_filtered, google_ads_data)
-        google_final_raw = map_google_conversions(df_filtered, google_final_raw)
-        #meta_final_raw = map_meta_leads(df_filtered, meta_ads_data)
-        #meta_final_raw = map_meta_conversions(df_filtered, meta_final_raw)
+        if df_filtered is not None:
+            df_filtered = map_salesforce_data(df_filtered, salesforce_data)
+            google_final_raw = map_google_leads(df_filtered, google_ads_data)
+            google_final_raw = map_google_conversions(df_filtered, google_final_raw)
+            #meta_final_raw = map_meta_leads(df_filtered, meta_ads_data)
+            #meta_final_raw = map_meta_conversions(df_filtered, meta_final_raw)
 
-        # map cities
-        google_final_raw = map_cities(google_final_raw, 'Campaign Name')
-        #meta_final_raw = map_cities(meta_final_raw, 'adset_name')
+            # map cities
+            google_final_raw = map_cities(google_final_raw, 'Campaign Name')
+            #meta_final_raw = map_cities(meta_final_raw, 'adset_name')
 
-        if st.checkbox("Show Mapped Data"):
-            st.header("Mapped Data")
+            if st.checkbox("Show Mapped Data"):
+                st.header("Mapped Data")
+                
+                #st.dataframe(df_filtered)
+                st.subheader("Google Mapped")
+                st.dataframe(google_final_raw)
+            #st.dataframe(meta_final_raw)
+
+            # Monthly view for Spends, Leads Conversions, CPL & CAC
+
+            # Create monthly view
+            if not google_final_raw.empty:
+                # Convert Date to datetime if not already
+                google_final_raw['Date'] = pd.to_datetime(google_final_raw['Date'])
+                
+                # Create month-year column
+                google_final_raw['Month-Year'] = google_final_raw['Date'].dt.strftime('%B-%Y')
+                
+                # First create the overall monthly view
+                monthly_data = google_final_raw.groupby('Month-Year').agg({
+                    'cost': 'sum',
+                    'SF_Leads': 'sum',
+                    'SF_conversions': 'sum'
+                }).reset_index()
+                
+                # Calculate CPL and CAC
+                monthly_data['CPL'] = monthly_data['cost'] / monthly_data['SF_Leads']
+                monthly_data['CAC'] = monthly_data['cost'] / monthly_data['SF_conversions']
+                
+                # Round numeric columns
+                monthly_data['cost'] = monthly_data['cost'].round()
+                monthly_data['CPL'] = monthly_data['CPL'].round()
+                monthly_data['CAC'] = monthly_data['CAC'].round()
+                
+                # Sort monthly data
+                monthly_data['Sort_Date'] = pd.to_datetime(monthly_data['Month-Year'], format='%B-%Y')
+                monthly_data = monthly_data.sort_values('Sort_Date')
+                monthly_data = monthly_data.drop('Sort_Date', axis=1)
+                
+                # Now create the city-wise monthly view
+                city_monthly = google_final_raw.groupby(['Month-Year', 'City']).agg({
+                    'cost': 'sum',
+                    'SF_Leads': 'sum',
+                    'SF_conversions': 'sum'
+                }).reset_index()
+                
+                # Calculate city-wise CPL and CAC
+                city_monthly['CPL'] = city_monthly['cost'] / city_monthly['SF_Leads']
+                city_monthly['CAC'] = city_monthly['cost'] / city_monthly['SF_conversions']
+                
+                # Round numeric columns
+                city_monthly['cost'] = city_monthly['cost'].round()
+                city_monthly['CPL'] = city_monthly['CPL'].round()
+                city_monthly['CAC'] = city_monthly['CAC'].round()
+                
+                # Sort data by date
+                city_monthly['Sort_Date'] = pd.to_datetime(city_monthly['Month-Year'], format='%B-%Y')
+                city_monthly = city_monthly.sort_values(['Sort_Date', 'City'])
+                city_monthly = city_monthly.drop('Sort_Date', axis=1)
+
+                # Display overall monthly performance
+                st.subheader("Overall Monthly Performance")
+                st.dataframe(monthly_data.set_index('Month-Year').T)
+                
+                # Create and display separate tables for each metric
+                st.subheader("Month-on-Month City-wise Performance")
+
+                # Create two columns
+                col1, col2 = st.columns(2)
+
+                # Column 1
+                with col1:
+                    # Leads table
+                    st.write("Monthly Leads by City")
+                    leads_pivot = pd.pivot_table(
+                        city_monthly, 
+                        values='SF_Leads',
+                        index='City',
+                        columns='Month-Year',
+                        aggfunc='sum'
+                    ).round(0)
+                    st.dataframe(leads_pivot)
+
+                    # Conversions table
+                    st.write("Monthly Conversions by City")
+                    conv_pivot = pd.pivot_table(
+                        city_monthly, 
+                        values='SF_conversions',
+                        index='City',
+                        columns='Month-Year',
+                        aggfunc='sum'
+                    ).round(0)
+                    st.dataframe(conv_pivot)
+
+                    # Spends table
+                    st.write("Monthly Spends by City")
+                    spends_pivot = pd.pivot_table(
+                        city_monthly, 
+                        values='cost',
+                        index='City',
+                        columns='Month-Year',
+                        aggfunc='sum'
+                    ).round(2)
+                    st.dataframe(spends_pivot)
+
+                # Column 2
+                with col2:
+                    # CPL table
+                    st.write("Monthly CPL by City")
+                    cpl_pivot = pd.pivot_table(
+                        city_monthly, 
+                        values='CPL',
+                        index='City',
+                        columns='Month-Year',
+                        aggfunc='mean'
+                    ).round(2)
+                    st.dataframe(cpl_pivot)
+
+                    # CAC table
+                    st.write("Monthly CAC by City")
+                    cac_pivot = pd.pivot_table(
+                        city_monthly, 
+                        values='CAC',
+                        index='City',
+                        columns='Month-Year',
+                        aggfunc='mean'
+                    ).round(2)
+                    st.dataframe(cac_pivot)
+
             
             #st.dataframe(df_filtered)
-            st.subheader("Google Mapped")
-            st.dataframe(google_final_raw)
-        #st.dataframe(meta_final_raw)
-
-        # Monthly view for Spends, Leads Conversions, CPL & CAC
-
-        # Create monthly view
-        if not google_final_raw.empty:
-            # Convert Date to datetime if not already
-            google_final_raw['Date'] = pd.to_datetime(google_final_raw['Date'])
-            
-            # Create month-year column
-            google_final_raw['Month-Year'] = google_final_raw['Date'].dt.strftime('%B-%Y')
-            
-            # First create the overall monthly view
-            monthly_data = google_final_raw.groupby('Month-Year').agg({
-                'cost': 'sum',
-                'SF_Leads': 'sum',
-                'SF_conversions': 'sum'
-            }).reset_index()
-            
-            # Calculate CPL and CAC
-            monthly_data['CPL'] = monthly_data['cost'] / monthly_data['SF_Leads']
-            monthly_data['CAC'] = monthly_data['cost'] / monthly_data['SF_conversions']
-            
-            # Round numeric columns
-            monthly_data['cost'] = monthly_data['cost'].round()
-            monthly_data['CPL'] = monthly_data['CPL'].round()
-            monthly_data['CAC'] = monthly_data['CAC'].round()
-            
-            # Sort monthly data
-            monthly_data['Sort_Date'] = pd.to_datetime(monthly_data['Month-Year'], format='%B-%Y')
-            monthly_data = monthly_data.sort_values('Sort_Date')
-            monthly_data = monthly_data.drop('Sort_Date', axis=1)
-            
-            # Now create the city-wise monthly view
-            city_monthly = google_final_raw.groupby(['Month-Year', 'City']).agg({
-                'cost': 'sum',
-                'SF_Leads': 'sum',
-                'SF_conversions': 'sum'
-            }).reset_index()
-            
-            # Calculate city-wise CPL and CAC
-            city_monthly['CPL'] = city_monthly['cost'] / city_monthly['SF_Leads']
-            city_monthly['CAC'] = city_monthly['cost'] / city_monthly['SF_conversions']
-            
-            # Round numeric columns
-            city_monthly['cost'] = city_monthly['cost'].round()
-            city_monthly['CPL'] = city_monthly['CPL'].round()
-            city_monthly['CAC'] = city_monthly['CAC'].round()
-            
-            # Sort data by date
-            city_monthly['Sort_Date'] = pd.to_datetime(city_monthly['Month-Year'], format='%B-%Y')
-            city_monthly = city_monthly.sort_values(['Sort_Date', 'City'])
-            city_monthly = city_monthly.drop('Sort_Date', axis=1)
-
-            # Display overall monthly performance
-            st.subheader("Overall Monthly Performance")
-            st.dataframe(monthly_data.set_index('Month-Year').T)
-            
-            # Create and display separate tables for each metric
-            st.subheader("Month-on-Month City-wise Performance")
-
-            # Create two columns
-            col1, col2 = st.columns(2)
-
-            # Column 1
-            with col1:
-                # Leads table
-                st.write("Monthly Leads by City")
-                leads_pivot = pd.pivot_table(
-                    city_monthly, 
-                    values='SF_Leads',
-                    index='City',
-                    columns='Month-Year',
-                    aggfunc='sum'
-                ).round(0)
-                st.dataframe(leads_pivot)
-
-                # Conversions table
-                st.write("Monthly Conversions by City")
-                conv_pivot = pd.pivot_table(
-                    city_monthly, 
-                    values='SF_conversions',
-                    index='City',
-                    columns='Month-Year',
-                    aggfunc='sum'
-                ).round(0)
-                st.dataframe(conv_pivot)
-
-                # Spends table
-                st.write("Monthly Spends by City")
-                spends_pivot = pd.pivot_table(
-                    city_monthly, 
-                    values='cost',
-                    index='City',
-                    columns='Month-Year',
-                    aggfunc='sum'
-                ).round(2)
-                st.dataframe(spends_pivot)
-
-            # Column 2
-            with col2:
-                # CPL table
-                st.write("Monthly CPL by City")
-                cpl_pivot = pd.pivot_table(
-                    city_monthly, 
-                    values='CPL',
-                    index='City',
-                    columns='Month-Year',
-                    aggfunc='mean'
-                ).round(2)
-                st.dataframe(cpl_pivot)
-
-                # CAC table
-                st.write("Monthly CAC by City")
-                cac_pivot = pd.pivot_table(
-                    city_monthly, 
-                    values='CAC',
-                    index='City',
-                    columns='Month-Year',
-                    aggfunc='mean'
-                ).round(2)
-                st.dataframe(cac_pivot)
-
-        
-        #st.dataframe(df_filtered)
-        # Add download button
-        # csv = df_filtered.to_csv(index=False).encode('utf-8')
-        # st.download_button(
-        #     "Download Data as CSV",
-        #     csv,
-        #     "ga4_data.csv",
-        #     "text/csv",
-        #     key='download-csv'
-        # )
+            # Add download button
+            # csv = df_filtered.to_csv(index=False).encode('utf-8')
+            # st.download_button(
+            #     "Download Data as CSV",
+            #     csv,
+            #     "ga4_data.csv",
+            #     "text/csv",
+            #     key='download-csv'
+            # )
+        else:
+            st.error("Error: End date must be after start date")
     else:
-        st.error("Error: End date must be after start date")
+        st.warning("Please upload Salesforce data on sidebar.")
+
+    if st.button("Refresh Data"):
+        st.cache_data.clear()
+        del st.session_state.salesforce_data
+        del st.session_state.Google_ads_data
+        del st.session_state.Meta_ads_data
+        del st.session_state.GA_data
+        st.experimental_rerun()
 
 if __name__ == "__main__":
     main()

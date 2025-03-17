@@ -236,7 +236,8 @@ def get_google_ads_data(client, customer_id, start_date, end_date):
         metrics.clicks,
         metrics.impressions,
         metrics.cost_micros,
-        metrics.conversions
+        metrics.conversions,
+        campaign.advertising_channel_type
     FROM
         campaign
     WHERE
@@ -254,7 +255,8 @@ def get_google_ads_data(client, customer_id, start_date, end_date):
                 "clicks": row.metrics.clicks if hasattr(row.metrics, 'clicks') else 'NA',
                 "impressions": row.metrics.impressions if hasattr(row.metrics, 'impressions') else 'NA',
                 "cost": row.metrics.cost_micros / 1e6 if hasattr(row.metrics, 'cost_micros') else 'NA', # Converting micros to standard currency unit
-                "conversions": row.metrics.conversions if hasattr(row.metrics, 'conversions') else 'NA'
+                "conversions": row.metrics.conversions if hasattr(row.metrics, 'conversions') else 'NA',
+                "Campaign_Type": row.campaign.advertising_channel_type if hasattr(row.campaign, 'advertising_channel_type') else 'NA'
             })
 
     return pd.DataFrame(data)
@@ -269,7 +271,7 @@ def get_facebook_data(start_date, end_date):
         print("Error: Dates must be in YYYY-MM-DD format")
         return
 
-    url = "https://graph.facebook.com/v18.0/act_547569015598645/insights"
+    url = "https://graph.facebook.com/v19.0/act_547569015598645/insights"
     access_token = st.secrets["facebook"]["access_token"]
     
     all_data = []
@@ -610,6 +612,23 @@ def map_cities(df, column_name):
     return df
 
 
+st.session_state.channel_type_map = {
+    0: "UNSPECIFIED",
+    1: "UNKNOWN",
+    2: "SEARCH",
+    3: "DISPLAY",
+    4: "SHOPPING",
+    5: "HOTEL",
+    6: "VIDEO",
+    7: "UAC",
+    8: "LOCAL",
+    9: "SMART",
+    10: "PERFORMANCE_MAX",
+    11: "LOCAL_SERVICES",
+    12: "DISCOVERY"
+}
+
+
 def main():
     GA_client = initialize_ga4_client()
     Ads_client = get_google_ads_client()
@@ -649,6 +668,7 @@ def main():
                     st.session_state.Meta_ads_data = get_facebook_data(start_date_str, end_date_str)
                     st.session_state.GA_data = fetch_ga4_data(GA_client, start_date_str, end_date_str)
                     st.session_state.processed_GA_data = GA4_data_preprocessing(st.session_state.GA_data, GA_client, start_date_str, end_date_str)
+                    st.session_state.Google_ads_data["Campaign_Type"] = st.session_state.Google_ads_data["Campaign_Type"].map(st.session_state.channel_type_map)
 
         df_filtered = st.session_state.processed_GA_data.copy()
         salesforce_data = st.session_state.salesforce_data.copy()
@@ -656,56 +676,44 @@ def main():
         meta_ads_data = st.session_state.Meta_ads_data.copy()
 
         salesforce_data = salesforce_data[['House Shifting Opportunity: Created Date', 'Mobile', 'Status', 'Shifting Type']]
-        google_ads_data = google_ads_data[google_ads_data['Campaign Name'].str.contains('packer', case=False, na=False)]
-        meta_ads_data = meta_ads_data[meta_ads_data['campaign_name'].str.contains('pnm', case=False, na=False)]
+        # google_ads_data = google_ads_data[google_ads_data['Campaign Name'].str.contains('packer', case=False, na=False)]
+        # meta_ads_data = meta_ads_data[meta_ads_data['campaign_name'].str.contains('pnm', case=False, na=False)]
         meta_ads_data = meta_ads_data.rename(columns={'date_stop': 'Date'})
-
-        if st.checkbox("Show Raw Data"):
-            st.header("Raw Data")
-
-            st.subheader("Salesforce Data")
-            st.dataframe(salesforce_data)
-
-            st.subheader("Google Ads Data")
-            st.dataframe(google_ads_data)
-
-            st.subheader("Meta Ads Data")
-            st.dataframe(meta_ads_data)
-
-            st.subheader("GA4 Data")
-            st.dataframe(df_filtered)
 
         if df_filtered is not None:
             df_filtered = map_salesforce_data(df_filtered, salesforce_data)
-            google_final_raw = map_google_leads(df_filtered, google_ads_data)
-            google_final_raw = map_google_conversions(df_filtered, google_final_raw)
+            google_all_final = map_google_leads(df_filtered, google_ads_data)
+            google_all_final = map_google_conversions(df_filtered, google_all_final)
+            google_all_final = map_cities(google_all_final, 'Campaign Name')
+
+            # Add a campaign category column to google_all_final
+            google_all_final['campaign_cat'] = 'Other'
+            google_all_final.loc[google_all_final['Campaign Name'].str.contains('packer', case=False, na=False), 'campaign_cat'] = 'PnM'
+            google_all_final.loc[(~google_all_final['Campaign Name'].str.contains('packer', case=False, na=False)) & 
+                                 (google_all_final['Campaign_Type'] == 'SEARCH'), 'campaign_cat'] = 'Other Search'
+            google_all_final.loc[google_all_final['Campaign_Type'] == 'UAC', 'campaign_cat'] = 'UAC'
+            
+            # Create the google_pnm_final for backward compatibility
+            google_pnm_final = google_all_final[google_all_final['campaign_cat'] == 'PnM'].copy()
+
+
             #meta_final_raw = map_meta_leads(df_filtered, meta_ads_data)
             #meta_final_raw = map_meta_conversions(df_filtered, meta_final_raw)
-
-            # map cities
-            google_final_raw = map_cities(google_final_raw, 'Campaign Name')
             #meta_final_raw = map_cities(meta_final_raw, 'adset_name')
-
-            if st.checkbox("Show Mapped Data"):
-                st.header("Mapped Data")
-                
-                #st.dataframe(df_filtered)
-                st.subheader("Google Mapped")
-                st.dataframe(google_final_raw)
-            #st.dataframe(meta_final_raw)
-
-            # Monthly view for Spends, Leads Conversions, CPL & CAC
+            meta_final_raw = st.session_state.Meta_ads_data.copy()
+            meta_final_raw = meta_final_raw.rename(columns={'date_stop': 'Date'})
+            meta_final_raw = map_cities(meta_final_raw, 'campaign_name')
 
             # Create monthly view
-            if not google_final_raw.empty:
+            if not google_pnm_final.empty:
                 # Convert Date to datetime if not already
-                google_final_raw['Date'] = pd.to_datetime(google_final_raw['Date'])
+                google_all_final['Date'] = pd.to_datetime(google_all_final['Date'])
                 
                 # Create month-year column
-                google_final_raw['Month-Year'] = google_final_raw['Date'].dt.strftime('%B-%Y')
+                google_all_final['Month-Year'] = google_all_final['Date'].dt.strftime('%B-%Y')
                 
                 # First create the overall monthly view
-                monthly_data = google_final_raw.groupby('Month-Year').agg({
+                monthly_data = google_all_final.groupby('Month-Year').agg({
                     'cost': 'sum',
                     'SF_Leads': 'sum',
                     'SF_conversions': 'sum'
@@ -725,8 +733,35 @@ def main():
                 monthly_data = monthly_data.sort_values('Sort_Date')
                 monthly_data = monthly_data.drop('Sort_Date', axis=1)
                 
+                # Create campaign category-wise monthly view
+                category_monthly = {}
+                for category in google_all_final['campaign_cat'].unique():
+                    category_data = google_all_final[google_all_final['campaign_cat'] == category]
+                    
+                    cat_monthly = category_data.groupby('Month-Year').agg({
+                        'cost': 'sum',
+                        'SF_Leads': 'sum',
+                        'SF_conversions': 'sum'
+                    }).reset_index()
+                    
+                    # Calculate CPL and CAC
+                    cat_monthly['CPL'] = cat_monthly['cost'] / cat_monthly['SF_Leads']
+                    cat_monthly['CAC'] = cat_monthly['cost'] / cat_monthly['SF_conversions']
+                    
+                    # Round numeric columns
+                    cat_monthly['cost'] = cat_monthly['cost'].round()
+                    cat_monthly['CPL'] = cat_monthly['CPL'].round()
+                    cat_monthly['CAC'] = cat_monthly['CAC'].round()
+                    
+                    # Sort monthly data
+                    cat_monthly['Sort_Date'] = pd.to_datetime(cat_monthly['Month-Year'], format='%B-%Y')
+                    cat_monthly = cat_monthly.sort_values('Sort_Date')
+                    cat_monthly = cat_monthly.drop('Sort_Date', axis=1)
+                    
+                    category_monthly[category] = cat_monthly
+                
                 # Now create the city-wise monthly view
-                city_monthly = google_final_raw.groupby(['Month-Year', 'City']).agg({
+                city_monthly = google_all_final.groupby(['Month-Year', 'City']).agg({
                     'cost': 'sum',
                     'SF_Leads': 'sum',
                     'SF_conversions': 'sum'
@@ -746,86 +781,439 @@ def main():
                 city_monthly = city_monthly.sort_values(['Sort_Date', 'City'])
                 city_monthly = city_monthly.drop('Sort_Date', axis=1)
 
-                # Display overall monthly performance
-                st.subheader("Overall Monthly Performance")
-                st.dataframe(monthly_data.set_index('Month-Year').T)
+                # Tabs at top for Overall, city level, campaign level & raw data
+                tab1, tab2, tab3, tab4 = st.tabs(["Overall", "City Level", "Campaign Level", "Raw Data"])
+
+                with tab1:
+                    st.subheader("Overall Monthly Performance")
+                    st.dataframe(monthly_data.set_index('Month-Year').T)
+                    
+                    # Display individual campaign category tables
+                    for category, data in category_monthly.items():
+                        st.subheader(f"{category} Monthly Performance")
+                        st.dataframe(data.set_index('Month-Year').T)
                 
-                # Create and display separate tables for each metric
-                st.subheader("Month-on-Month City-wise Performance")
+                with tab2:
+                    # Create and display separate tables for each metric
+                    st.subheader("Month-on-Month City-wise Performance")
 
-                # Create two columns
-                col1, col2 = st.columns(2)
+                    # Create two columns
+                    col1, col2 = st.columns(2)
 
-                # Column 1
-                with col1:
-                    # Leads table
-                    st.write("Monthly Leads by City")
-                    leads_pivot = pd.pivot_table(
-                        city_monthly, 
-                        values='SF_Leads',
-                        index='City',
-                        columns='Month-Year',
-                        aggfunc='sum'
-                    ).round(0)
-                    st.dataframe(leads_pivot)
+                    # Column 1
+                    with col1:
+                        # Leads table
+                        st.write("Monthly Leads by City")
+                        leads_pivot = pd.pivot_table(
+                            city_monthly, 
+                            values='SF_Leads',
+                            index='City',
+                            columns='Month-Year',
+                            aggfunc='sum'
+                        ).round(0)
+                        st.dataframe(leads_pivot)
 
-                    # Conversions table
-                    st.write("Monthly Conversions by City")
-                    conv_pivot = pd.pivot_table(
-                        city_monthly, 
-                        values='SF_conversions',
-                        index='City',
-                        columns='Month-Year',
-                        aggfunc='sum'
-                    ).round(0)
-                    st.dataframe(conv_pivot)
+                        # Conversions table
+                        st.write("Monthly Conversions by City")
+                        conv_pivot = pd.pivot_table(
+                            city_monthly, 
+                            values='SF_conversions',
+                            index='City',
+                            columns='Month-Year',
+                            aggfunc='sum'
+                        ).round(0)
+                        st.dataframe(conv_pivot)
 
-                    # Spends table
-                    st.write("Monthly Spends by City")
-                    spends_pivot = pd.pivot_table(
-                        city_monthly, 
-                        values='cost',
-                        index='City',
-                        columns='Month-Year',
-                        aggfunc='sum'
-                    ).round(2)
-                    st.dataframe(spends_pivot)
+                        # Spends table
+                        st.write("Monthly Spends by City")
+                        spends_pivot = pd.pivot_table(
+                            city_monthly, 
+                            values='cost',
+                            index='City',
+                            columns='Month-Year',
+                            aggfunc='sum'
+                        ).round(2)
+                        st.dataframe(spends_pivot)
 
-                # Column 2
-                with col2:
-                    # CPL table
-                    st.write("Monthly CPL by City")
-                    cpl_pivot = pd.pivot_table(
-                        city_monthly, 
-                        values='CPL',
-                        index='City',
-                        columns='Month-Year',
-                        aggfunc='mean'
-                    ).round(2)
-                    st.dataframe(cpl_pivot)
+                    # Column 2
+                    with col2:
+                        # CPL table
+                        st.write("Monthly CPL by City")
+                        cpl_pivot = pd.pivot_table(
+                            city_monthly, 
+                            values='CPL',
+                            index='City',
+                            columns='Month-Year',
+                            aggfunc='mean'
+                        ).round(2)
+                        st.dataframe(cpl_pivot)
 
-                    # CAC table
-                    st.write("Monthly CAC by City")
-                    cac_pivot = pd.pivot_table(
-                        city_monthly, 
-                        values='CAC',
-                        index='City',
-                        columns='Month-Year',
-                        aggfunc='mean'
-                    ).round(2)
-                    st.dataframe(cac_pivot)
+                        # CAC table
+                        st.write("Monthly CAC by City")
+                        cac_pivot = pd.pivot_table(
+                            city_monthly, 
+                            values='CAC',
+                            index='City',
+                            columns='Month-Year',
+                            aggfunc='mean'
+                        ).round(2)
+                        st.dataframe(cac_pivot)
 
-            
-            #st.dataframe(df_filtered)
-            # Add download button
-            # csv = df_filtered.to_csv(index=False).encode('utf-8')
-            # st.download_button(
-            #     "Download Data as CSV",
-            #     csv,
-            #     "ga4_data.csv",
-            #     "text/csv",
-            #     key='download-csv'
-            # )
+                        st.write("City-wise L-to-C%")
+                        city_monthly['L-to-C %'] = (city_monthly['SF_conversions'] / city_monthly['SF_Leads']) * 100
+                        l_to_c_pivot = pd.pivot_table(
+                            city_monthly, 
+                            values='L-to-C %',
+                            index='City',
+                            columns='Month-Year',
+                            aggfunc='mean'
+                        ).round(2)
+                        # Format the values to include % symbol
+                        l_to_c_pivot = l_to_c_pivot.applymap(lambda x: f"{x}%" if not pd.isna(x) else x)
+                        st.dataframe(l_to_c_pivot)
+
+                with tab3:
+                    st.header("Campaign Level Data")
+                    st.subheader("Campaign Performance Comparison")
+                    
+                    # Add filters for date range selection side-by-side
+                    col1, col2 = st.columns(2)
+                    
+                    # First period selector with platform and campaign category filters
+                    with col1:
+                        st.markdown("**First Date Range**")
+                        start_date1 = st.date_input("Start Date 1", value=start_date, key="start1")
+                        end_date1 = st.date_input("End Date 1", value=end_date, key="end1")
+                        platform1 = st.selectbox("Select Platform 1", ["Google Ads", "Meta Ads", "Both"], key="platform1")
+                        
+                        # Add campaign category filter for Google Ads
+                        if platform1 in ["Google Ads", "Both"]:
+                            campaign_cats = ["All"] + list(google_all_final['campaign_cat'].unique())
+                            selected_cat1 = st.selectbox("Select Campaign Category 1", campaign_cats, key="cat1")
+                        
+                        # Add text filters for campaign names
+                        campaign_filter_include1 = st.text_area("Include Campaigns (Period 1)", key="filter_include1", 
+                                                        placeholder="Type terms to include (one per line)...")
+                        campaign_filter_exclude1 = st.text_area("Exclude Campaigns (Period 1)", key="filter_exclude1", 
+                                                        placeholder="Type terms to exclude (one per line)...")
+                    
+                    # Second period selector with platform and campaign category filters
+                    with col2:
+                        st.markdown("**Second Date Range**")
+                        default_start2 = start_date - timedelta(days=31)  # Default to previous month
+                        default_end2 = end_date - timedelta(days=31)
+                        start_date2 = st.date_input("Start Date 2", value=default_start2, key="start2")
+                        end_date2 = st.date_input("End Date 2", value=default_end2, key="end2")
+                        platform2 = st.selectbox("Select Platform 2", ["Google Ads", "Meta Ads", "Both"], key="platform2")
+                        
+                        # Add campaign category filter for Google Ads
+                        if platform2 in ["Google Ads", "Both"]:
+                            campaign_cats = ["All"] + list(google_all_final['campaign_cat'].unique())
+                            selected_cat2 = st.selectbox("Select Campaign Category 2", campaign_cats, key="cat2")
+                        
+                        # Add text filters for campaign names
+                        campaign_filter_include2 = st.text_area("Include Campaigns (Period 2)", key="filter_include2", 
+                                                        placeholder="Type terms to include (one per line)...")
+                        campaign_filter_exclude2 = st.text_area("Exclude Campaigns (Period 2)", key="filter_exclude2", 
+                                                        placeholder="Type terms to exclude (one per line)...")
+                    
+                    # Helper function for filtering campaigns by multiple include/exclude terms
+                    def apply_campaign_filters(df, include_text, exclude_text):
+                        result_df = df.copy()
+                        
+                        # Process include filters (OR condition between terms)
+                        if include_text.strip():
+                            include_terms = [term.strip() for term in include_text.split('\n') if term.strip()]
+                            if include_terms:
+                                include_mask = False
+                                for term in include_terms:
+                                    include_mask = include_mask | result_df['Campaign Name'].str.contains(term, case=False, na=False)
+                                result_df = result_df[include_mask]
+                        
+                        # Process exclude filters (AND condition between terms)
+                        if exclude_text.strip():
+                            exclude_terms = [term.strip() for term in exclude_text.split('\n') if term.strip()]
+                            for term in exclude_terms:
+                                result_df = result_df[~result_df['Campaign Name'].str.contains(term, case=False, na=False)]
+                        
+                        return result_df
+                    
+                    # Process data based on platform selection for period 1
+                    if platform1 == "Google Ads" or platform1 == "Both":
+                        if not google_all_final.empty:
+                            # Data for first date range
+                            mask1 = (google_all_final['Date'] >= pd.Timestamp(start_date1)) & (google_all_final['Date'] <= pd.Timestamp(end_date1))
+                            google_data1 = google_all_final[mask1]
+                            
+                            # Apply campaign category filter if selected
+                            if 'selected_cat1' in locals() and selected_cat1 != "All":
+                                google_data1 = google_data1[google_data1['campaign_cat'] == selected_cat1]
+                            
+                            # Create aggregated dataframe
+                            google_agg1 = google_data1.groupby('Campaign Name').agg({
+                                'cost': 'sum',
+                                'SF_Leads': 'sum',
+                                'SF_conversions': 'sum'
+                            }).reset_index()
+                            
+                            # Calculate metrics
+                            google_agg1['CPL'] = (google_agg1['cost'] / google_agg1['SF_Leads']).round(2)
+                            google_agg1['CAC'] = (google_agg1['cost'] / google_agg1['SF_conversions']).round(2)
+                            google_agg1['L-to-C %'] = ((google_agg1['SF_conversions'] / google_agg1['SF_Leads']) * 100).round(2)
+                            google_agg1.rename(columns={
+                                'cost': 'Spends',
+                                'SF_Leads': 'Leads',
+                                'SF_conversions': 'Conversions'
+                            }, inplace=True)
+                            google_agg1.replace([float('inf'), -float('inf')], 0, inplace=True)
+                            google_agg1.fillna(0, inplace=True)
+                            
+                            # Format the data columns
+                            metrics = ['Spends', 'Leads', 'CPL', 'Conversions', 'CAC', 'L-to-C %']
+                            for metric in metrics:
+                                if metric in ['Spends', 'CPL', 'CAC']:
+                                    google_agg1[metric] = google_agg1[metric].round(2)
+                                elif metric in ['Leads', 'Conversions']:
+                                    google_agg1[metric] = google_agg1[metric].astype(int)
+                            
+                            # Apply text filters
+                            google_agg1 = apply_campaign_filters(google_agg1, campaign_filter_include1, campaign_filter_exclude1)
+                    
+                    if platform1 == "Meta Ads" or platform1 == "Both":
+                        if 'meta_final_raw' in locals() and not meta_final_raw.empty:
+                            # Ensure Date column is datetime type
+                            meta_final_raw['Date'] = pd.to_datetime(meta_final_raw['Date'])
+                            
+                            # Data for first date range
+                            mask1 = (meta_final_raw['Date'] >= pd.Timestamp(start_date1)) & (meta_final_raw['Date'] <= pd.Timestamp(end_date1))
+                            meta_data1 = meta_final_raw[mask1]
+                            
+                            # Create aggregated dataframe
+                            meta_agg1 = meta_data1.groupby('adset_name').agg({
+                                'spend': 'sum',  # Meta data uses 'spend' instead of 'cost'
+                                'SF_Leads': 'sum',
+                                'SF_conversions': 'sum'
+                            }).reset_index()
+                            
+                            # Calculate metrics
+                            meta_agg1['CPL'] = (meta_agg1['spend'] / meta_agg1['SF_Leads']).round(2)
+                            meta_agg1['CAC'] = (meta_agg1['spend'] / meta_agg1['SF_conversions']).round(2)
+                            meta_agg1['L-to-C %'] = ((meta_agg1['SF_conversions'] / meta_agg1['SF_Leads']) * 100).round(2)
+                            meta_agg1.rename(columns={
+                                'spend': 'Spends',
+                                'SF_Leads': 'Leads',
+                                'SF_conversions': 'Conversions',
+                                'adset_name': 'Campaign Name'  # Rename to match Google format
+                            }, inplace=True)
+                            meta_agg1.replace([float('inf'), -float('inf')], 0, inplace=True)
+                            meta_agg1.fillna(0, inplace=True)
+                            
+                            # Format the data columns
+                            metrics = ['Spends', 'Leads', 'CPL', 'Conversions', 'CAC', 'L-to-C %']
+                            for metric in metrics:
+                                if metric in ['Spends', 'CPL', 'CAC']:
+                                    meta_agg1[metric] = meta_agg1[metric].round(2)
+                                elif metric in ['Leads', 'Conversions']:
+                                    meta_agg1[metric] = meta_agg1[metric].astype(int)
+                            
+                            # Apply text filters
+                            meta_agg1 = apply_campaign_filters(meta_agg1, campaign_filter_include1, campaign_filter_exclude1)
+                    
+                    # Process data based on platform selection for period 2
+                    if platform2 == "Google Ads" or platform2 == "Both":
+                        if not google_all_final.empty:
+                            # Data for second date range
+                            mask2 = (google_all_final['Date'] >= pd.Timestamp(start_date2)) & (google_all_final['Date'] <= pd.Timestamp(end_date2))
+                            google_data2 = google_all_final[mask2]
+                            
+                            # Apply campaign category filter if selected
+                            if 'selected_cat2' in locals() and selected_cat2 != "All":
+                                google_data2 = google_data2[google_data2['campaign_cat'] == selected_cat2]
+                            
+                            # Create aggregated dataframe
+                            google_agg2 = google_data2.groupby('Campaign Name').agg({
+                                'cost': 'sum',
+                                'SF_Leads': 'sum',
+                                'SF_conversions': 'sum'
+                            }).reset_index()
+                            
+                            # Calculate metrics
+                            google_agg2['CPL'] = (google_agg2['cost'] / google_agg2['SF_Leads']).round(2)
+                            google_agg2['CAC'] = (google_agg2['cost'] / google_agg2['SF_conversions']).round(2)
+                            google_agg2['L-to-C %'] = ((google_agg2['SF_conversions'] / google_agg2['SF_Leads']) * 100).round(2)
+                            google_agg2.rename(columns={
+                                'cost': 'Spends',
+                                'SF_Leads': 'Leads',
+                                'SF_conversions': 'Conversions'
+                            }, inplace=True)
+                            google_agg2.replace([float('inf'), -float('inf')], 0, inplace=True)
+                            google_agg2.fillna(0, inplace=True)
+                            
+                            # Format the data columns
+                            for metric in metrics:
+                                if metric in ['Spends', 'CPL', 'CAC']:
+                                    google_agg2[metric] = google_agg2[metric].round(2)
+                                elif metric in ['Leads', 'Conversions']:
+                                    google_agg2[metric] = google_agg2[metric].astype(int)
+                            
+                            # Apply text filters
+                            google_agg2 = apply_campaign_filters(google_agg2, campaign_filter_include2, campaign_filter_exclude2)
+                    
+                    if platform2 == "Meta Ads" or platform2 == "Both":
+                        if 'meta_final_raw' in locals() and not meta_final_raw.empty:
+                            # Ensure Date column is datetime type
+                            meta_final_raw['Date'] = pd.to_datetime(meta_final_raw['Date'])
+                            
+                            # Data for second date range
+                            mask2 = (meta_final_raw['Date'] >= pd.Timestamp(start_date2)) & (meta_final_raw['Date'] <= pd.Timestamp(end_date2))
+                            meta_data2 = meta_final_raw[mask2]
+                            
+                            # Create aggregated dataframe
+                            meta_agg2 = meta_data2.groupby('adset_name').agg({
+                                'spend': 'sum',
+                                'SF_Leads': 'sum',
+                                'SF_conversions': 'sum'
+                            }).reset_index()
+                            
+                            # Calculate metrics
+                            meta_agg2['CPL'] = (meta_agg2['spend'] / meta_agg2['SF_Leads']).round(2)
+                            meta_agg2['CAC'] = (meta_agg2['spend'] / meta_agg2['SF_conversions']).round(2)
+                            meta_agg2['L-to-C %'] = ((meta_agg2['SF_conversions'] / meta_agg2['SF_Leads']) * 100).round(2)
+                            meta_agg2.rename(columns={
+                                'spend': 'Spends',
+                                'SF_Leads': 'Leads',
+                                'SF_conversions': 'Conversions',
+                                'adset_name': 'Campaign Name'  # Rename to match Google format
+                            }, inplace=True)
+                            meta_agg2.replace([float('inf'), -float('inf')], 0, inplace=True)
+                            meta_agg2.fillna(0, inplace=True)
+                            
+                            # Format the data columns
+                            for metric in metrics:
+                                if metric in ['Spends', 'CPL', 'CAC']:
+                                    meta_agg2[metric] = meta_agg2[metric].round(2)
+                                elif metric in ['Leads', 'Conversions']:
+                                    meta_agg2[metric] = meta_agg2[metric].astype(int)
+                            
+                            # Apply text filters
+                            meta_agg2 = apply_campaign_filters(meta_agg2, campaign_filter_include2, campaign_filter_exclude2)
+                    
+                    # Display results side by side in two columns
+                    col1, col2 = st.columns(2)
+                    
+                    # First period results
+                    with col1:
+                        st.markdown(f"**Period 1:** {start_date1.strftime('%Y-%m-%d')} to {end_date1.strftime('%Y-%m-%d')}")
+                        
+                        if platform1 == "Google Ads" or platform1 == "Both":
+                            if 'google_agg1' in locals():
+                                cat_display = f" ({selected_cat1})" if 'selected_cat1' in locals() and selected_cat1 != "All" else ""
+                                include_terms = [t.strip() for t in campaign_filter_include1.split('\n') if t.strip()]
+                                exclude_terms = [t.strip() for t in campaign_filter_exclude1.split('\n') if t.strip()]
+                                
+                                filter_text = []
+                                if include_terms:
+                                    filter_text.append(f"including any of: {', '.join(include_terms)}")
+                                if exclude_terms:
+                                    filter_text.append(f"excluding all of: {', '.join(exclude_terms)}")
+                                
+                                filter_display = f" ({' and '.join(filter_text)})" if filter_text else ""
+                                st.markdown(f"**Google Ads{cat_display}{filter_display}**")
+                                st.dataframe(google_agg1[['Campaign Name'] + metrics])
+                        
+                        if platform1 == "Meta Ads" or platform1 == "Both":
+                            if 'meta_agg1' in locals():
+                                include_terms = [t.strip() for t in campaign_filter_include1.split('\n') if t.strip()]
+                                exclude_terms = [t.strip() for t in campaign_filter_exclude1.split('\n') if t.strip()]
+                                
+                                filter_text = []
+                                if include_terms:
+                                    filter_text.append(f"including any of: {', '.join(include_terms)}")
+                                if exclude_terms:
+                                    filter_text.append(f"excluding all of: {', '.join(exclude_terms)}")
+                                
+                                filter_display = f" ({' and '.join(filter_text)})" if filter_text else ""
+                                st.markdown(f"**Meta Ads{filter_display}**")
+                                st.dataframe(meta_agg1[['Campaign Name'] + metrics])
+                    
+                    # Second period results
+                    with col2:
+                        st.markdown(f"**Period 2:** {start_date2.strftime('%Y-%m-%d')} to {end_date2.strftime('%Y-%m-%d')}")
+                        
+                        if platform2 == "Google Ads" or platform2 == "Both":
+                            if 'google_agg2' in locals():
+                                cat_display = f" ({selected_cat2})" if 'selected_cat2' in locals() and selected_cat2 != "All" else ""
+                                include_terms = [t.strip() for t in campaign_filter_include2.split('\n') if t.strip()]
+                                exclude_terms = [t.strip() for t in campaign_filter_exclude2.split('\n') if t.strip()]
+                                
+                                filter_text = []
+                                if include_terms:
+                                    filter_text.append(f"including any of: {', '.join(include_terms)}")
+                                if exclude_terms:
+                                    filter_text.append(f"excluding all of: {', '.join(exclude_terms)}")
+                                
+                                filter_display = f" ({' and '.join(filter_text)})" if filter_text else ""
+                                st.markdown(f"**Google Ads{cat_display}{filter_display}**")
+                                st.dataframe(google_agg2[['Campaign Name'] + metrics])
+                        
+                        if platform2 == "Meta Ads" or platform2 == "Both":
+                            if 'meta_agg2' in locals():
+                                include_terms = [t.strip() for t in campaign_filter_include2.split('\n') if t.strip()]
+                                exclude_terms = [t.strip() for t in campaign_filter_exclude2.split('\n') if t.strip()]
+                                
+                                filter_text = []
+                                if include_terms:
+                                    filter_text.append(f"including any of: {', '.join(include_terms)}")
+                                if exclude_terms:
+                                    filter_text.append(f"excluding all of: {', '.join(exclude_terms)}")
+                                
+                                filter_display = f" ({' and '.join(filter_text)})" if filter_text else ""
+                                st.markdown(f"**Meta Ads{filter_display}**")
+                                st.dataframe(meta_agg2[['Campaign Name'] + metrics])
+
+                with tab4:
+                    st.header("Raw Data")
+
+                    st.subheader("Salesforce Data")
+                    st.dataframe(salesforce_data)
+
+                    st.subheader("Google Ads Data")
+                    st.dataframe(google_ads_data)
+                    st.download_button(
+                        label="Download Raw_Google_Data",
+                        data=google_ads_data.to_csv(index=False),
+                        file_name="Google_Data.csv",
+                        mime="text/csv"
+                    )
+
+                    st.subheader("Meta Ads Data")
+                    st.dataframe(meta_ads_data)
+                    st.download_button(
+                        label="Download Raw_Meta_Data",
+                        data=meta_ads_data.to_csv(index=False),
+                        file_name="Meta_Data.csv",
+                        mime="text/csv"
+                    )
+
+                    st.subheader("Pre-Processed GA Data")
+                    st.dataframe(st.session_state.processed_GA_data) 
+                    st.download_button(
+                        label="Download Pre-Processed_GA_Data",
+                        data=st.session_state.processed_GA_data.to_csv(index=False),
+                        file_name="GA4_Data.csv",
+                        mime="text/csv"
+                    )
+
+                    st.subheader("SF Mapped on GA Data")
+                    st.dataframe(df_filtered)
+                    # download button
+                    st.download_button(
+                        label="Download SF-Mpped_GA Data",
+                        data=df_filtered.to_csv(index=False),
+                        file_name="GA4_Data.csv",
+                        mime="text/csv"
+                    )
+               
         else:
             st.error("Error: End date must be after start date")
     else:
@@ -837,6 +1225,7 @@ def main():
         del st.session_state.Google_ads_data
         del st.session_state.Meta_ads_data
         del st.session_state.GA_data
+        st.clear_cache()
         st.experimental_rerun()
 
 if __name__ == "__main__":

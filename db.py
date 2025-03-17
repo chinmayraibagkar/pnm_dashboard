@@ -786,12 +786,12 @@ def main():
 
                 with tab1:
                     st.subheader("Overall Monthly Performance")
-                    st.dataframe(monthly_data.set_index('Month-Year').T)
+                    st.dataframe(monthly_data.set_index('Month-Year').T, use_container_width=False)
                     
                     # Display individual campaign category tables
                     for category, data in category_monthly.items():
                         st.subheader(f"{category} Monthly Performance")
-                        st.dataframe(data.set_index('Month-Year').T)
+                        st.dataframe(data.set_index('Month-Year').T, use_container_width=False)
                 
                 with tab2:
                     # Create and display separate tables for each metric
@@ -811,7 +811,7 @@ def main():
                             columns='Month-Year',
                             aggfunc='sum'
                         ).round(0)
-                        st.dataframe(leads_pivot)
+                        st.dataframe(leads_pivot, use_container_width=False)
 
                         # Conversions table
                         st.write("Monthly Conversions by City")
@@ -822,7 +822,7 @@ def main():
                             columns='Month-Year',
                             aggfunc='sum'
                         ).round(0)
-                        st.dataframe(conv_pivot)
+                        st.dataframe(conv_pivot, use_container_width=False)
 
                         # Spends table
                         st.write("Monthly Spends by City")
@@ -833,7 +833,7 @@ def main():
                             columns='Month-Year',
                             aggfunc='sum'
                         ).round(2)
-                        st.dataframe(spends_pivot)
+                        st.dataframe(spends_pivot, use_container_width=False)
 
                     # Column 2
                     with col2:
@@ -846,7 +846,7 @@ def main():
                             columns='Month-Year',
                             aggfunc='mean'
                         ).round(2)
-                        st.dataframe(cpl_pivot)
+                        st.dataframe(cpl_pivot, use_container_width=False)
 
                         # CAC table
                         st.write("Monthly CAC by City")
@@ -857,7 +857,7 @@ def main():
                             columns='Month-Year',
                             aggfunc='mean'
                         ).round(2)
-                        st.dataframe(cac_pivot)
+                        st.dataframe(cac_pivot, use_container_width=False)
 
                         st.write("City-wise L-to-C%")
                         city_monthly['L-to-C %'] = (city_monthly['SF_conversions'] / city_monthly['SF_Leads']) * 100
@@ -870,7 +870,7 @@ def main():
                         ).round(2)
                         # Format the values to include % symbol
                         l_to_c_pivot = l_to_c_pivot.applymap(lambda x: f"{x}%" if not pd.isna(x) else x)
-                        st.dataframe(l_to_c_pivot)
+                        st.dataframe(l_to_c_pivot, use_container_width=False)
 
                 with tab3:
                     st.header("Campaign Level Data")
@@ -1119,7 +1119,7 @@ def main():
                                 
                                 filter_display = f" ({' and '.join(filter_text)})" if filter_text else ""
                                 st.markdown(f"**Google Ads{cat_display}{filter_display}**")
-                                st.dataframe(google_agg1[['Campaign Name'] + metrics])
+                                st.dataframe(google_agg1[['Campaign Name'] + metrics], use_container_width=False)
                         
                         if platform1 == "Meta Ads" or platform1 == "Both":
                             if 'meta_agg1' in locals():
@@ -1134,7 +1134,7 @@ def main():
                                 
                                 filter_display = f" ({' and '.join(filter_text)})" if filter_text else ""
                                 st.markdown(f"**Meta Ads{filter_display}**")
-                                st.dataframe(meta_agg1[['Campaign Name'] + metrics])
+                                st.dataframe(meta_agg1[['Campaign Name'] + metrics], use_container_width=False)
                     
                     # Second period results
                     with col2:
@@ -1154,7 +1154,7 @@ def main():
                                 
                                 filter_display = f" ({' and '.join(filter_text)})" if filter_text else ""
                                 st.markdown(f"**Google Ads{cat_display}{filter_display}**")
-                                st.dataframe(google_agg2[['Campaign Name'] + metrics])
+                                st.dataframe(google_agg2[['Campaign Name'] + metrics], use_container_width=False)
                         
                         if platform2 == "Meta Ads" or platform2 == "Both":
                             if 'meta_agg2' in locals():
@@ -1169,7 +1169,7 @@ def main():
                                 
                                 filter_display = f" ({' and '.join(filter_text)})" if filter_text else ""
                                 st.markdown(f"**Meta Ads{filter_display}**")
-                                st.dataframe(meta_agg2[['Campaign Name'] + metrics])
+                                st.dataframe(meta_agg2[['Campaign Name'] + metrics], use_container_width=False)
 
                 with tab4:
                     st.header("Raw Data")
@@ -1205,7 +1205,7 @@ def main():
                     )
 
                     st.subheader("SF Mapped on GA Data")
-                    st.dataframe(df_filtered)
+                    st.dataframe(df_filtered, use_container_width=True)
                     # download button
                     st.download_button(
                         label="Download SF-Mpped_GA Data",

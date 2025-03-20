@@ -712,14 +712,20 @@ def main():
                 # Create month-year column
                 google_all_final['Month-Year'] = google_all_final['Date'].dt.strftime('%B-%Y')
                 
-                # First create the overall monthly view
-                monthly_data = google_all_final.groupby('Month-Year').agg({
-                    'cost': 'sum',
+                # First create the overall monthly view with modified criteria
+                # Get PnM spends only
+                pnm_monthly_spends = google_all_final[google_all_final['campaign_cat'] == 'PnM'].groupby('Month-Year')['cost'].sum().reset_index()
+                
+                # Get overall leads and conversions (all campaigns)
+                overall_monthly = google_all_final.groupby('Month-Year').agg({
                     'SF_Leads': 'sum',
                     'SF_conversions': 'sum'
                 }).reset_index()
                 
-                # Calculate CPL and CAC
+                # Merge the datasets
+                monthly_data = pd.merge(overall_monthly, pnm_monthly_spends, on='Month-Year', how='left')
+                
+                # Calculate CPL and CAC using PnM spends and overall leads/conversions
                 monthly_data['CPL'] = monthly_data['cost'] / monthly_data['SF_Leads']
                 monthly_data['CAC'] = monthly_data['cost'] / monthly_data['SF_conversions']
                 
@@ -732,10 +738,17 @@ def main():
                 monthly_data['Sort_Date'] = pd.to_datetime(monthly_data['Month-Year'], format='%B-%Y')
                 monthly_data = monthly_data.sort_values('Sort_Date')
                 monthly_data = monthly_data.drop('Sort_Date', axis=1)
+
+                # sequence the data
+                monthly_data = monthly_data[['cost', 'SF_Leads', 'SF_conversions', 'CPL', 'CAC', 'Month-Year']]
                 
-                # Create campaign category-wise monthly view
+                # Create campaign category-wise monthly view (excluding UAC)
                 category_monthly = {}
                 for category in google_all_final['campaign_cat'].unique():
+                    # Skip UAC category
+                    if category == 'UAC':
+                        continue
+                        
                     category_data = google_all_final[google_all_final['campaign_cat'] == category]
                     
                     cat_monthly = category_data.groupby('Month-Year').agg({
@@ -760,8 +773,9 @@ def main():
                     
                     category_monthly[category] = cat_monthly
                 
-                # Now create the city-wise monthly view
-                city_monthly = google_all_final.groupby(['Month-Year', 'City']).agg({
+                # Now create the city-wise monthly view (excluding UAC campaigns)
+                non_uac_data = google_all_final[google_all_final['campaign_cat'] != 'UAC']
+                city_monthly = non_uac_data.groupby(['Month-Year', 'City']).agg({
                     'cost': 'sum',
                     'SF_Leads': 'sum',
                     'SF_conversions': 'sum'
@@ -785,10 +799,10 @@ def main():
                 tab1, tab2, tab3, tab4 = st.tabs(["Overall", "City Level", "Campaign Level", "Raw Data"])
 
                 with tab1:
-                    st.subheader("Overall Monthly Performance")
+                    st.subheader("Overall Monthly Performance (PnM Spends + All Leads/Conversions)")
                     st.dataframe(monthly_data.set_index('Month-Year').T, use_container_width=False)
                     
-                    # Display individual campaign category tables
+                    # Display individual campaign category tables (excluding UAC)
                     for category, data in category_monthly.items():
                         st.subheader(f"{category} Monthly Performance")
                         st.dataframe(data.set_index('Month-Year').T, use_container_width=False)

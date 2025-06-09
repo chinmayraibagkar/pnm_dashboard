@@ -226,7 +226,7 @@ def get_google_ads_client():
 
 
 def get_google_ads_data(client, customer_id, start_date, end_date):
-    ga_service = client.get_service("GoogleAdsService", version="v17")
+    ga_service = client.get_service("GoogleAdsService", version="v20")
 
     # Constructing the query
     query = f"""

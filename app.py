@@ -318,7 +318,7 @@ def main():
         st.markdown("---")
         
         # Fetch Data button
-        if st.button("🔄 Fetch & Process Data", type="primary", use_container_width=True):
+        if st.button("🔄 Fetch & Process Data", type="primary", width="stretch"):
             if sf_file is None:
                 st.error("Please upload Salesforce CSV file first!")
             elif start_date > end_date:
@@ -373,7 +373,7 @@ def main():
         
         # Separate button to process NE data (when GA-SF is already loaded)
         if st.session_state.data_loaded and st.session_state.ga_sf_data is not None:
-            if st.button("📁 Map NE Data", use_container_width=True):
+            if st.button("📁 Map NE Data", width="stretch"):
                 if ne_file is None:
                     st.error("Please upload NE data file first!")
                 else:
@@ -396,7 +396,7 @@ def main():
                             st.error(f"Error mapping NE data: {str(e)}")
         
         # Clear cache button
-        if st.button("🗑️ Clear Cache", use_container_width=True):
+        if st.button("🗑️ Clear Cache", width="stretch"):
             st.cache_data.clear()
             st.cache_resource.clear()
             st.session_state.ga_sf_data = None
@@ -477,7 +477,7 @@ def main():
             st.warning("No data available for the selected filters.")
         else:
             # Data table
-            st.dataframe(filtered_df, use_container_width=True, height=400)
+            st.dataframe(filtered_df, width="stretch", height=400)
             
             # Action buttons
             col1, col2, col3 = st.columns([1, 1, 1])
@@ -488,11 +488,11 @@ def main():
                     data=filtered_df.to_csv(index=False),
                     file_name=f"GA_SF_Mapped_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
-                    use_container_width=True
+                    width="stretch"
                 )
             
             with col2:
-                if st.button("☁️ Upload to BigQuery", key="upload_ga_sf", use_container_width=True):
+                if st.button("☁️ Upload to BigQuery", key="upload_ga_sf", width="stretch"):
                     with st.spinner("Uploading to BigQuery..."):
                         success, status_updates, message = upload_ga_sf_data(st.session_state.ga_sf_data)
                         if success:
@@ -503,7 +503,7 @@ def main():
                             st.error(message)
             
             with col3:
-                if st.button("🔴 Reset BQ Table", key="reset_ga_sf_btn", use_container_width=True):
+                if st.button("🔴 Reset BQ Table", key="reset_ga_sf_btn", width="stretch"):
                     st.session_state.show_reset_ga_sf = True
             
             # Show reset dialog
@@ -523,7 +523,7 @@ def main():
                 st.warning("No data available for the selected filters.")
             else:
                 # Data table
-                st.dataframe(ne_filtered, use_container_width=True, height=400)
+                st.dataframe(ne_filtered, width="stretch", height=400)
                 
                 # Action buttons
                 col1, col2, col3 = st.columns([1, 1, 1])
@@ -534,11 +534,11 @@ def main():
                         data=ne_filtered.to_csv(index=False),
                         file_name=f"GA_SF_NE_Mapped_{datetime.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv",
-                        use_container_width=True
+                        width="stretch"
                     )
                 
                 with col2:
-                    if st.button("☁️ Upload to BigQuery", key="upload_ga_sf_ne", use_container_width=True):
+                    if st.button("☁️ Upload to BigQuery", key="upload_ga_sf_ne", width="stretch"):
                         with st.spinner("Uploading to BigQuery..."):
                             success, status_updates, message = upload_ga_sf_ne_data(st.session_state.ga_sf_ne_data)
                             if success:
@@ -549,7 +549,7 @@ def main():
                                 st.error(message)
                 
                 with col3:
-                    if st.button("🔴 Reset BQ Table", key="reset_ne_btn", use_container_width=True):
+                    if st.button("🔴 Reset BQ Table", key="reset_ne_btn", width="stretch"):
                         st.session_state.show_reset_ne = True
                 
                 # Show reset dialog

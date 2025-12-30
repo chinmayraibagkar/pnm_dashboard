@@ -83,7 +83,7 @@ class Authenticator:
                 </div>
             """, unsafe_allow_html=True)
             
-            st.button("🔐 Sign in with Google", on_click=st.login, use_container_width=True, type="primary")
+            st.button("🔐 Sign in with Google", on_click=st.login, width="stretch", type="primary")
 
     def show_user_info(self):
         """Display logged-in user info in sidebar"""
@@ -93,7 +93,7 @@ class Authenticator:
             st.sidebar.markdown(f"**👤 Logged in as:**")
             st.sidebar.caption(user_email)
             
-            if st.sidebar.button("🚪 Logout", use_container_width=True):
+            if st.sidebar.button("🚪 Logout", width="stretch"):
                 self.logout()
     
     def logout(self):

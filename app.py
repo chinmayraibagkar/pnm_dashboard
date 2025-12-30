@@ -251,10 +251,21 @@ def main():
     # Initialize authenticator
     auth = Authenticator()
     
-    # Check authentication
+    # Check authentication using Streamlit's built-in auth
     if not auth.is_authenticated():
         auth.show_login_page()
         return
+    
+    # Get user email and check domain access
+    user_email = auth.get_user_email()
+    if not auth.check_email_access(user_email):
+        st.error(f"❌ Access denied for {user_email}")
+        st.warning("Your email domain is not authorized to use this application.")
+        st.button("🚪 Logout", on_click=st.logout)
+        return
+    
+    # Store user email in session state for security alerts
+    st.session_state.user_email = user_email
     
     # Show user info in sidebar
     auth.show_user_info()

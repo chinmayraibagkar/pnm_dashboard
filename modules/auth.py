@@ -1,25 +1,18 @@
 """
-Authenticator module for Google OAuth and domain restrictions
+Authenticator module using Streamlit's built-in authentication
 """
 import streamlit as st
 from typing import List, Optional
-import google_auth_oauthlib.flow
-import requests
 
 
 class Authenticator:
-    """Handle authentication with Google OAuth and domain restrictions"""
+    """Handle authentication with Streamlit's built-in auth and domain restrictions"""
     
     def __init__(self):
         """Initialize authenticator with secrets"""
         self.allowed_domains = st.secrets.get("auth", {}).get("allowed_domains", ["aristok.com"])
         self.allowed_emails = st.secrets.get("auth", {}).get("allowed_emails", [])
         self.blocked_emails = st.secrets.get("auth", {}).get("blocked_emails", [])
-        
-        # Use dedicated oauth section for authentication credentials
-        self.client_id = st.secrets.get("oauth", {}).get("client_id")
-        self.client_secret = st.secrets.get("oauth", {}).get("client_secret")
-        self.redirect_uri = st.secrets.get("auth", {}).get("redirect_uri", "http://localhost:8501")
         
         # Convert string to list if needed
         if isinstance(self.allowed_domains, str):
@@ -30,12 +23,14 @@ class Authenticator:
             self.blocked_emails = [e.strip() for e in self.blocked_emails.split(",")]
 
     def is_authenticated(self) -> bool:
-        """Check if user is authenticated"""
-        return st.session_state.get('authenticated', False)
+        """Check if user is authenticated using Streamlit's built-in auth"""
+        return st.user.is_logged_in
     
     def get_user_email(self) -> Optional[str]:
         """Get authenticated user's email"""
-        return st.session_state.get('user_email', None)
+        if self.is_authenticated():
+            return st.user.get("email", None)
+        return None
     
     def check_email_access(self, email: str) -> bool:
         """Check if email has access"""
@@ -57,25 +52,16 @@ class Authenticator:
         except:
             return False
 
-    def get_flow(self):
-        """Create OAuth flow"""
-        client_config = {
-            "web": {
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": [self.redirect_uri]
-            }
-        }
-        return google_auth_oauthlib.flow.Flow.from_client_config(
-            client_config,
-            scopes=["https://www.googleapis.com/auth/userinfo.email", "openid"],
-            redirect_uri=self.redirect_uri
-        )
+    def is_local_development(self) -> bool:
+        """Check if running in local development mode"""
+        try:
+            redirect_uri = st.secrets.get("auth", {}).get("redirect_uri", "")
+            return "localhost" in redirect_uri or "127.0.0.1" in redirect_uri
+        except:
+            return True  # Default to dev mode if secrets not loaded
 
     def show_login_page(self):
-        """Display login page with REAL Google OAuth"""
+        """Display login page with Streamlit's built-in sign-in"""
         
         # Header
         st.markdown("""
@@ -96,77 +82,8 @@ class Authenticator:
                     </p>
                 </div>
             """, unsafe_allow_html=True)
-
-            # Check for OAuth code in URL
-            if "code" in st.query_params:
-                try:
-                    code = st.query_params["code"]
-                    flow = self.get_flow()
-                    flow.fetch_token(code=code)
-                    credentials = flow.credentials
-                    
-                    # Get User Info
-                    user_info = requests.get(
-                        "https://www.googleapis.com/oauth2/v2/userinfo",
-                        headers={"Authorization": f"Bearer {credentials.token}"}
-                    ).json()
-                    
-                    email = user_info.get("email")
-                    
-                    # Check blocked list first
-                    if email.lower() in [e.lower() for e in self.blocked_emails]:
-                        st.error(f"❌ Access denied for {email}")
-                        st.warning("Your account has been blocked. Contact administrator.")
-                        st.query_params.clear()
-                    elif self.check_email_access(email):
-                        st.session_state.authenticated = True
-                        st.session_state.user_email = email
-                        # Clear params and rerun
-                        st.query_params.clear()
-                        st.rerun()
-                    else:
-                        st.error(f"❌ Access denied for {email}")
-                        st.warning("Your domain is not authorized.")
-                        st.query_params.clear()
-                        
-                except Exception as e:
-                    st.error(f"Authentication failed: {str(e)}")
-                    st.query_params.clear()
             
-            else:
-                # Show Login Button
-                try:
-                    flow = self.get_flow()
-                    auth_url, _ = flow.authorization_url(prompt='consent')
-                    
-                    st.markdown(f"""
-                        <a href="{auth_url}" target="_self" style="text-decoration: none;">
-                            <button style="
-                                width: 100%;
-                                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                                color: white;
-                                padding: 15px 30px;
-                                border-radius: 10px;
-                                border: none;
-                                font-weight: 600;
-                                font-size: 16px;
-                                cursor: pointer;
-                                text-align: center;
-                                display: flex;
-                                justify-content: center;
-                                align-items: center;
-                                gap: 10px;
-                                margin-top: 20px;
-                                transition: transform 0.2s;
-                            ">
-                                🔐 Sign in with Google
-                            </button>
-                        </a>
-                    """, unsafe_allow_html=True)
-                    
-                except Exception as e:
-                    st.error(f"OAuth Configuration Error: {str(e)}")
-                    st.info("Check client_id/client_secret in secrets.toml")
+            st.button("🔐 Sign in with Google", on_click=st.login, use_container_width=True, type="primary")
 
     def show_user_info(self):
         """Display logged-in user info in sidebar"""
@@ -181,6 +98,4 @@ class Authenticator:
     
     def logout(self):
         """Logout current user"""
-        st.session_state.authenticated = False
-        st.session_state.user_email = None
-        st.rerun()
+        st.logout()

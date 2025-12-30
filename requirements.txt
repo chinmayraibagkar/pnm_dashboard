@@ -1,9 +1,0 @@
-streamlit
-google-auth
-google-analytics-data
-pandas
-google-ads
-requests
-numpy
-plotly
-google-analytics

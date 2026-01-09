@@ -60,9 +60,11 @@ GA4_DIMENSIONS = [
     "customEvent:PnM_parameter",
     "date",
     "firstUserCampaignName",
+    "firstUserCampaignId",
     "sessionSource",
     "sessionMedium",
     "sessionCampaignName",
+    "sessionCampaignId",
     "customEvent:GTES_mobile",
     "sessionManualAdContent",
     "operatingSystem"

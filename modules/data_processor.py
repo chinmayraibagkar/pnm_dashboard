@@ -191,38 +191,44 @@ def apply_campaign_mapping(df: pd.DataFrame) -> pd.DataFrame:
 
 def calculate_final_source(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Calculate Final_Source based on campaign logic.
+    Calculate Final_Source and Final_Source_Campaign_ID based on campaign logic.
     
     Logic:
     - If First_User_Campaign is "NA":
-        - If "Brand" in Session_Campaign -> "FT_Organic"
-        - Else if Session_Campaign != "NA" -> Session_Campaign
-        - Else -> First_User_Campaign (which is "NA")
-    - Else -> First_User_Campaign
+        - If "Brand" in Session_Campaign -> "FT_Organic" (no campaign ID)
+        - Else if Session_Campaign != "NA" -> Session_Campaign (use Session_Campaign_ID)
+        - Else -> First_User_Campaign (which is "NA", no campaign ID)
+    - Else -> First_User_Campaign (use First_User_Campaign_ID)
     
     Args:
-        df: DataFrame with First_User_Campaign and Session_Campaign columns
+        df: DataFrame with First_User_Campaign, Session_Campaign, 
+            First_User_Campaign_ID, and Session_Campaign_ID columns
         
     Returns:
-        DataFrame with Final_Source column added
+        DataFrame with Final_Source and Final_Source_Campaign_ID columns added
     """
     df = df.copy()
     
-    def get_final_source(row):
+    def get_final_source_and_id(row):
         first_user = row.get('First_User_Campaign', 'NA')
         session = row.get('Session_Campaign', 'NA')
+        first_user_id = row.get('First_User_Campaign_ID', '')
+        session_id = row.get('Session_Campaign_ID', '')
         
         if first_user == 'NA':
             if 'Brand' in str(session):
-                return 'FT_Organic'
+                return 'FT_Organic', ''  # FT_Organic has no campaign ID
             elif session != 'NA':
-                return session
+                return session, session_id
             else:
-                return first_user
+                return first_user, ''  # NA has no campaign ID
         else:
-            return first_user
+            return first_user, first_user_id
     
-    df['Final_Source'] = df.apply(get_final_source, axis=1)
+    # Apply the function and split results into two columns
+    results = df.apply(get_final_source_and_id, axis=1)
+    df['Final_Source'] = results.apply(lambda x: x[0])
+    df['Final_Source_Campaign_ID'] = results.apply(lambda x: x[1])
     
     return df
 

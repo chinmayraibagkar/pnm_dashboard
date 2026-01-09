@@ -88,9 +88,11 @@ class GA4Client:
                     Dimension(name="customEvent:PnM_parameter"),
                     Dimension(name="date"),
                     Dimension(name="firstUserCampaignName"),
+                    Dimension(name="firstUserCampaignId"),
                     Dimension(name="sessionSource"),
                     Dimension(name="sessionMedium"),
                     Dimension(name="sessionCampaignName"),
+                    Dimension(name="sessionCampaignId"),
                     Dimension(name="customEvent:GTES_mobile"),
                     Dimension(name="sessionManualAdContent"),
                     Dimension(name="operatingSystem"),
@@ -123,23 +125,29 @@ class GA4Client:
                 row.dimension_values[1].value, '%Y%m%d'
             ).strftime('%Y-%m-%d')
             
-            source = row.dimension_values[3].value
-            medium = row.dimension_values[4].value
+            # Dimension indices after adding campaign IDs:
+            # 0: PnM_parameter, 1: date, 2: firstUserCampaignName, 3: firstUserCampaignId,
+            # 4: sessionSource, 5: sessionMedium, 6: sessionCampaignName, 7: sessionCampaignId,
+            # 8: GTES_mobile, 9: sessionManualAdContent, 10: operatingSystem
+            source = row.dimension_values[4].value
+            medium = row.dimension_values[5].value
             source_medium = f"{source} / {medium}"
             
             # Handle Operating System - categorize as iOS, Windows, Android, or Others
-            os_value = row.dimension_values[8].value
+            os_value = row.dimension_values[10].value
             operating_system = os_value if os_value in ["iOS", "Windows", "Android"] else "Others"
             
             item = {
                 'PnM_Parameter': row.dimension_values[0].value,
                 'Date': date_str,
                 'First_User_Campaign': row.dimension_values[2].value,
+                'First_User_Campaign_ID': row.dimension_values[3].value,
                 'Sessions': int(row.metric_values[0].value),
                 'Source_Medium': source_medium,
-                'Session_Campaign': row.dimension_values[5].value,
+                'Session_Campaign': row.dimension_values[6].value,
+                'Session_Campaign_ID': row.dimension_values[7].value,
                 'Engaged_Sessions': int(row.metric_values[1].value),
-                'Keyword': row.dimension_values[7].value,
+                'Keyword': row.dimension_values[9].value,
                 'Operating_System': operating_system
             }
             data.append(item)

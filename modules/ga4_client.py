@@ -44,6 +44,7 @@ class GA4Client:
     def fetch_data(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
         """
         Fetch GA4 data with dimension filter to exclude blank or '(not set)' PnM_parameters.
+        Uses 2 API calls due to GA4's 9 dimension limit, then merges the results.
         
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -76,7 +77,10 @@ class GA4Client:
             )
         )
         
-        all_rows = []
+        # First API call: Main dimensions (9 dimensions - within limit)
+        # PnM_parameter, date, firstUserCampaignName, sessionSource, sessionMedium,
+        # sessionCampaignName, GTES_mobile, sessionManualAdContent, operatingSystem
+        all_rows_main = []
         offset = 0
         limit = 100000
         
@@ -88,11 +92,9 @@ class GA4Client:
                     Dimension(name="customEvent:PnM_parameter"),
                     Dimension(name="date"),
                     Dimension(name="firstUserCampaignName"),
-                    Dimension(name="firstUserCampaignId"),
                     Dimension(name="sessionSource"),
                     Dimension(name="sessionMedium"),
                     Dimension(name="sessionCampaignName"),
-                    Dimension(name="sessionCampaignId"),
                     Dimension(name="customEvent:GTES_mobile"),
                     Dimension(name="sessionManualAdContent"),
                     Dimension(name="operatingSystem"),
@@ -111,43 +113,97 @@ class GA4Client:
             if not response.rows:
                 break
             
-            all_rows.extend(response.rows)
+            all_rows_main.extend(response.rows)
             
             if len(response.rows) < limit:
                 break
             
             offset += limit
         
-        # Process rows into dictionaries
+        # Second API call: Campaign IDs (4 dimensions - for ID lookup)
+        # firstUserCampaignName, firstUserCampaignId, sessionCampaignName, sessionCampaignId
+        campaign_id_map = {}  # (firstUserCampaign, sessionCampaign) -> (firstUserId, sessionId)
+        offset = 0
+        
+        while True:
+            request = RunReportRequest(
+                property=f"properties/{self.property_id}",
+                date_ranges=[DateRange(start_date=start_date, end_date=end_date)],
+                dimensions=[
+                    Dimension(name="firstUserCampaignName"),
+                    Dimension(name="firstUserCampaignId"),
+                    Dimension(name="sessionCampaignName"),
+                    Dimension(name="sessionCampaignId"),
+                ],
+                metrics=[
+                    Metric(name="sessions"),
+                ],
+                dimension_filter=filter_ex,
+                offset=offset,
+                limit=limit
+            )
+            
+            response = self.client.run_report(request)
+            
+            if not response.rows:
+                break
+            
+            for row in response.rows:
+                first_user_campaign = row.dimension_values[0].value
+                first_user_campaign_id = row.dimension_values[1].value
+                session_campaign = row.dimension_values[2].value
+                session_campaign_id = row.dimension_values[3].value
+                
+                # Store mapping - use campaign names as keys to look up IDs
+                if first_user_campaign not in campaign_id_map:
+                    campaign_id_map[first_user_campaign] = first_user_campaign_id
+                # Also create a separate map for session campaigns
+                session_key = f"session_{session_campaign}"
+                if session_key not in campaign_id_map:
+                    campaign_id_map[session_key] = session_campaign_id
+            
+            if len(response.rows) < limit:
+                break
+            
+            offset += limit
+        
+        # Process main rows and add campaign IDs from lookup
         data = []
-        for row in all_rows:
+        for row in all_rows_main:
             date_str = datetime.strptime(
                 row.dimension_values[1].value, '%Y%m%d'
             ).strftime('%Y-%m-%d')
             
-            # Dimension indices after adding campaign IDs:
-            # 0: PnM_parameter, 1: date, 2: firstUserCampaignName, 3: firstUserCampaignId,
-            # 4: sessionSource, 5: sessionMedium, 6: sessionCampaignName, 7: sessionCampaignId,
-            # 8: GTES_mobile, 9: sessionManualAdContent, 10: operatingSystem
-            source = row.dimension_values[4].value
-            medium = row.dimension_values[5].value
+            # Dimension indices for main request:
+            # 0: PnM_parameter, 1: date, 2: firstUserCampaignName,
+            # 3: sessionSource, 4: sessionMedium, 5: sessionCampaignName,
+            # 6: GTES_mobile, 7: sessionManualAdContent, 8: operatingSystem
+            first_user_campaign = row.dimension_values[2].value
+            session_campaign = row.dimension_values[5].value
+            
+            source = row.dimension_values[3].value
+            medium = row.dimension_values[4].value
             source_medium = f"{source} / {medium}"
             
             # Handle Operating System - categorize as iOS, Windows, Android, or Others
-            os_value = row.dimension_values[10].value
+            os_value = row.dimension_values[8].value
             operating_system = os_value if os_value in ["iOS", "Windows", "Android"] else "Others"
+            
+            # Look up campaign IDs from the second API call
+            first_user_campaign_id = campaign_id_map.get(first_user_campaign, "")
+            session_campaign_id = campaign_id_map.get(f"session_{session_campaign}", "")
             
             item = {
                 'PnM_Parameter': row.dimension_values[0].value,
                 'Date': date_str,
-                'First_User_Campaign': row.dimension_values[2].value,
-                'First_User_Campaign_ID': row.dimension_values[3].value,
+                'First_User_Campaign': first_user_campaign,
+                'First_User_Campaign_ID': first_user_campaign_id,
                 'Sessions': int(row.metric_values[0].value),
                 'Source_Medium': source_medium,
-                'Session_Campaign': row.dimension_values[6].value,
-                'Session_Campaign_ID': row.dimension_values[7].value,
+                'Session_Campaign': session_campaign,
+                'Session_Campaign_ID': session_campaign_id,
                 'Engaged_Sessions': int(row.metric_values[1].value),
-                'Keyword': row.dimension_values[9].value,
+                'Keyword': row.dimension_values[7].value,
                 'Operating_System': operating_system
             }
             data.append(item)

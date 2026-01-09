@@ -494,11 +494,10 @@ def main():
             with col2:
                 if st.button("☁️ Upload to BigQuery", key="upload_ga_sf", width="stretch"):
                     with st.spinner("Uploading to BigQuery..."):
-                        success, status_updates, message = upload_ga_sf_data(st.session_state.ga_sf_data)
+                        success, stats, message = upload_ga_sf_data(st.session_state.ga_sf_data)
                         if success:
                             st.success(message)
-                            if status_updates > 0:
-                                st.info(f"🔄 {status_updates} status updates detected and applied.")
+                            st.info(f"📊 **New Records:** {stats['new_records']} | **Status Updates:** {stats['status_updates']} | **Total Rows in BQ:** {stats['total_rows']}")
                         else:
                             st.error(message)
             
@@ -540,11 +539,10 @@ def main():
                 with col2:
                     if st.button("☁️ Upload to BigQuery", key="upload_ga_sf_ne", width="stretch"):
                         with st.spinner("Uploading to BigQuery..."):
-                            success, status_updates, message = upload_ga_sf_ne_data(st.session_state.ga_sf_ne_data)
+                            success, stats, message = upload_ga_sf_ne_data(st.session_state.ga_sf_ne_data)
                             if success:
                                 st.success(message)
-                                if status_updates > 0:
-                                    st.info(f"🔄 {status_updates} status updates detected and applied.")
+                                st.info(f"📊 **New Records:** {stats['new_records']} | **Status Updates:** {stats['status_updates']} | **Total Rows in BQ:** {stats['total_rows']}")
                             else:
                                 st.error(message)
                 

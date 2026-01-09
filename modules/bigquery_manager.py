@@ -170,55 +170,90 @@ def get_existing_data(client: bigquery.Client, table_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def find_status_updates(
+def merge_with_existing_data(
     new_df: pd.DataFrame, 
     existing_df: pd.DataFrame
-) -> Tuple[int, pd.DataFrame]:
+) -> Tuple[pd.DataFrame, int, int]:
     """
-    Find records where status has changed for the same Mobile-Month-Year key.
+    Merge new data with existing BigQuery data using date-based comparison.
+    For each Mobile-Month-Year key, keeps the record with the LATEST date.
     
     Args:
         new_df: New data to upload
         existing_df: Existing data in BigQuery
         
     Returns:
-        Tuple of (status_update_count, merged_df_with_latest_status)
+        Tuple of (merged_df, new_records_count, status_updates_count)
     """
     if existing_df.empty:
-        return 0, new_df
+        return new_df, len(new_df), 0
+    
+    new_df = new_df.copy()
+    existing_df = existing_df.copy()
     
     # Ensure proper types
     for df in [new_df, existing_df]:
         df['Mobile'] = df['Mobile'].astype(str)
         df['Month'] = df['Month'].astype(int)
         df['Year'] = df['Year'].astype(int)
+        df['Date'] = pd.to_datetime(df['Date'])
     
-    # Create unique key
+    # Create unique key: Mobile_Month_Year
     new_df['_key'] = new_df['Mobile'] + '_' + new_df['Month'].astype(str) + '_' + new_df['Year'].astype(str)
     existing_df['_key'] = existing_df['Mobile'] + '_' + existing_df['Month'].astype(str) + '_' + existing_df['Year'].astype(str)
     
-    # Find overlapping keys
+    # Find key sets
     existing_keys = set(existing_df['_key'].unique())
     new_keys = set(new_df['_key'].unique())
+    
+    # Keys only in new data (new records)
+    only_new_keys = new_keys - existing_keys
+    new_records_count = len(only_new_keys)
+    
+    # Keys in both (need date-based comparison)
     overlapping_keys = existing_keys.intersection(new_keys)
     
-    if not overlapping_keys:
-        new_df = new_df.drop(columns=['_key'])
-        return 0, new_df
+    # Keys only in existing (keep as-is)
+    only_existing_keys = existing_keys - new_keys
     
-    # Check for status changes
-    status_updates = 0
+    status_updates_count = 0
+    result_rows = []
     
-    existing_status = existing_df[existing_df['_key'].isin(overlapping_keys)][['_key', 'Status']].drop_duplicates(subset=['_key'])
-    new_status = new_df[new_df['_key'].isin(overlapping_keys)][['_key', 'Status']].drop_duplicates(subset=['_key'])
+    # Add new-only records
+    new_only_df = new_df[new_df['_key'].isin(only_new_keys)]
+    result_rows.append(new_only_df)
     
-    merged_status = existing_status.merge(new_status, on='_key', suffixes=('_old', '_new'))
-    status_updates = (merged_status['Status_old'] != merged_status['Status_new']).sum()
+    # Add existing-only records
+    existing_only_df = existing_df[existing_df['_key'].isin(only_existing_keys)]
+    result_rows.append(existing_only_df)
     
-    # Clean up
-    new_df = new_df.drop(columns=['_key'])
+    # For overlapping keys, compare dates and keep latest
+    if overlapping_keys:
+        for key in overlapping_keys:
+            new_row = new_df[new_df['_key'] == key].iloc[0]
+            existing_row = existing_df[existing_df['_key'] == key].iloc[0]
+            
+            new_date = new_row['Date']
+            existing_date = existing_row['Date']
+            
+            if new_date >= existing_date:
+                # New record is same date or newer - use new data
+                result_rows.append(new_df[new_df['_key'] == key])
+                # Check if status actually changed
+                if 'Status' in new_row.index and 'Status' in existing_row.index:
+                    if new_row['Status'] != existing_row['Status']:
+                        status_updates_count += 1
+            else:
+                # Existing record is newer - keep existing
+                result_rows.append(existing_df[existing_df['_key'] == key])
     
-    return status_updates, new_df
+    # Combine all results
+    merged_df = pd.concat(result_rows, ignore_index=True)
+    
+    # Drop helper column
+    merged_df = merged_df.drop(columns=['_key'])
+    
+    return merged_df, new_records_count, status_updates_count
 
 
 def prepare_upload_df(df: pd.DataFrame, target_columns: list) -> pd.DataFrame:
@@ -253,16 +288,18 @@ def prepare_upload_df(df: pd.DataFrame, target_columns: list) -> pd.DataFrame:
 
 def upload_ga_sf_data(
     df: pd.DataFrame
-) -> Tuple[bool, int, str]:
+) -> Tuple[bool, dict, str]:
     """
-    Upload GA-SF mapped data to BigQuery with status update detection.
+    Upload GA-SF mapped data to BigQuery with date-based merge.
     Uses WRITE_TRUNCATE to replace existing data.
+    For each Mobile-Month-Year key, keeps the record with the LATEST date.
     
     Args:
         df: DataFrame to upload
         
     Returns:
-        Tuple of (success, status_updates_count, message)
+        Tuple of (success, stats_dict, message)
+        stats_dict contains: new_records, status_updates, total_rows
     """
     try:
         client = get_bq_client()
@@ -273,30 +310,14 @@ def upload_ga_sf_data(
         # Get existing data for comparison
         existing_df = get_existing_data(client, BQ_TABLE_GA_SF)
         
-        # Find status updates
-        status_updates, df = find_status_updates(df, existing_df)
-        
-        # Prepare upload DataFrame
+        # Merge with existing data using date-based comparison
         target_columns = [field.name for field in GA_SF_SCHEMA]
         upload_df = prepare_upload_df(df, target_columns)
         
-        # Merge with existing data (keep latest status for each key)
-        if not existing_df.empty:
-            existing_df['_key'] = existing_df['Mobile'].astype(str) + '_' + existing_df['Month'].astype(str) + '_' + existing_df['Year'].astype(str)
-            upload_df['_key'] = upload_df['Mobile'].astype(str) + '_' + upload_df['Month'].astype(str) + '_' + upload_df['Year'].astype(str)
-            
-            # Get keys that are only in existing (not in new)
-            new_keys = set(upload_df['_key'].unique())
-            only_existing_keys = set(existing_df['_key'].unique()) - new_keys
-            
-            # Keep records from existing that are not in new
-            existing_to_keep = existing_df[existing_df['_key'].isin(only_existing_keys)]
-            if not existing_to_keep.empty:
-                existing_to_keep = prepare_upload_df(existing_to_keep.drop(columns=['_key']), target_columns)
-                upload_df = upload_df.drop(columns=['_key'])
-                upload_df = pd.concat([upload_df, existing_to_keep], ignore_index=True)
-            else:
-                upload_df = upload_df.drop(columns=['_key'])
+        merged_df, new_records, status_updates = merge_with_existing_data(upload_df, existing_df)
+        
+        # Prepare final upload DataFrame
+        final_df = prepare_upload_df(merged_df, target_columns)
         
         # Upload to BigQuery
         job_config = bigquery.LoadJobConfig(
@@ -304,31 +325,39 @@ def upload_ga_sf_data(
             schema=GA_SF_SCHEMA
         )
         
-        job = client.load_table_from_dataframe(upload_df, full_table_id, job_config=job_config)
+        job = client.load_table_from_dataframe(final_df, full_table_id, job_config=job_config)
         job.result()
         
-        message = f"Successfully uploaded {len(upload_df)} rows to {BQ_TABLE_GA_SF}"
-        if status_updates > 0:
-            message += f" ({status_updates} status updates detected)"
+        total_rows = len(final_df)
         
-        return True, status_updates, message
+        stats = {
+            'new_records': new_records,
+            'status_updates': status_updates,
+            'total_rows': total_rows
+        }
+        
+        message = f"Successfully uploaded to {BQ_TABLE_GA_SF}"
+        
+        return True, stats, message
         
     except Exception as e:
-        return False, 0, f"Error uploading to BigQuery: {str(e)}"
+        return False, {'new_records': 0, 'status_updates': 0, 'total_rows': 0}, f"Error uploading to BigQuery: {str(e)}"
 
 
 def upload_ga_sf_ne_data(
     df: pd.DataFrame
-) -> Tuple[bool, int, str]:
+) -> Tuple[bool, dict, str]:
     """
-    Upload GA-SF-NE mapped data to BigQuery with status update detection.
+    Upload GA-SF-NE mapped data to BigQuery with date-based merge.
     Dynamically creates schema based on DataFrame columns.
+    For each Mobile-Month-Year key, keeps the record with the LATEST date.
     
     Args:
         df: DataFrame to upload
         
     Returns:
-        Tuple of (success, status_updates_count, message)
+        Tuple of (success, stats_dict, message)
+        stats_dict contains: new_records, status_updates, total_rows
     """
     try:
         client = get_bq_client()
@@ -352,33 +381,18 @@ def upload_ga_sf_ne_data(
         # Get existing data for comparison
         existing_df = get_existing_data(client, BQ_TABLE_GA_SF_NE)
         
-        # Find status updates (if Status column exists)
-        status_updates = 0
-        if 'Status' in df.columns and not existing_df.empty and 'Status' in existing_df.columns:
-            status_updates, df = find_status_updates(df, existing_df)
-        
         # Prepare upload DataFrame
         upload_df = df.copy()
         if 'Date' in upload_df.columns:
             upload_df['Date'] = pd.to_datetime(upload_df['Date']).dt.date
         
-        # Merge with existing data
-        if not existing_df.empty and 'Mobile' in df.columns and 'Month' in df.columns and 'Year' in df.columns:
-            existing_df['_key'] = existing_df['Mobile'].astype(str) + '_' + existing_df['Month'].astype(str) + '_' + existing_df['Year'].astype(str)
-            upload_df['_key'] = upload_df['Mobile'].astype(str) + '_' + upload_df['Month'].astype(str) + '_' + upload_df['Year'].astype(str)
-            
-            new_keys = set(upload_df['_key'].unique())
-            only_existing_keys = set(existing_df['_key'].unique()) - new_keys
-            
-            existing_to_keep = existing_df[existing_df['_key'].isin(only_existing_keys)]
-            if not existing_to_keep.empty:
-                existing_to_keep = existing_to_keep.drop(columns=['_key'])
-                if 'Date' in existing_to_keep.columns:
-                    existing_to_keep['Date'] = pd.to_datetime(existing_to_keep['Date']).dt.date
-                upload_df = upload_df.drop(columns=['_key'])
-                upload_df = pd.concat([upload_df, existing_to_keep], ignore_index=True)
-            else:
-                upload_df = upload_df.drop(columns=['_key'])
+        # Merge with existing data using date-based comparison
+        if 'Mobile' in df.columns and 'Month' in df.columns and 'Year' in df.columns:
+            merged_df, new_records, status_updates = merge_with_existing_data(upload_df, existing_df)
+        else:
+            merged_df = upload_df
+            new_records = len(upload_df)
+            status_updates = 0
         
         # Upload to BigQuery
         job_config = bigquery.LoadJobConfig(
@@ -386,14 +400,20 @@ def upload_ga_sf_ne_data(
             schema=schema
         )
         
-        job = client.load_table_from_dataframe(upload_df, full_table_id, job_config=job_config)
+        job = client.load_table_from_dataframe(merged_df, full_table_id, job_config=job_config)
         job.result()
         
-        message = f"Successfully uploaded {len(upload_df)} rows to {BQ_TABLE_GA_SF_NE}"
-        if status_updates > 0:
-            message += f" ({status_updates} status updates detected)"
+        total_rows = len(merged_df)
         
-        return True, status_updates, message
+        stats = {
+            'new_records': new_records,
+            'status_updates': status_updates,
+            'total_rows': total_rows
+        }
+        
+        message = f"Successfully uploaded to {BQ_TABLE_GA_SF_NE}"
+        
+        return True, stats, message
         
     except Exception as e:
-        return False, 0, f"Error uploading to BigQuery: {str(e)}"
+        return False, {'new_records': 0, 'status_updates': 0, 'total_rows': 0}, f"Error uploading to BigQuery: {str(e)}"

@@ -177,6 +177,7 @@ def merge_with_existing_data(
     """
     Merge new data with existing BigQuery data using date-based comparison.
     For each Mobile-Month-Year key, keeps the record with the LATEST date.
+    Uses vectorized operations for performance.
     
     Args:
         new_df: New data to upload
@@ -210,48 +211,72 @@ def merge_with_existing_data(
     only_new_keys = new_keys - existing_keys
     new_records_count = len(only_new_keys)
     
-    # Keys in both (need date-based comparison)
-    overlapping_keys = existing_keys.intersection(new_keys)
-    
     # Keys only in existing (keep as-is)
     only_existing_keys = existing_keys - new_keys
     
-    status_updates_count = 0
-    result_rows = []
+    # Keys in both (need date-based comparison)
+    overlapping_keys = existing_keys.intersection(new_keys)
     
-    # Add new-only records
+    result_parts = []
+    
+    # 1. Add new-only records
     new_only_df = new_df[new_df['_key'].isin(only_new_keys)]
-    result_rows.append(new_only_df)
+    if not new_only_df.empty:
+        result_parts.append(new_only_df)
     
-    # Add existing-only records
+    # 2. Add existing-only records
     existing_only_df = existing_df[existing_df['_key'].isin(only_existing_keys)]
-    result_rows.append(existing_only_df)
+    if not existing_only_df.empty:
+        result_parts.append(existing_only_df)
     
-    # For overlapping keys, compare dates and keep latest
+    # 3. For overlapping keys - vectorized date comparison
+    status_updates_count = 0
     if overlapping_keys:
+        # Get overlapping records from both dataframes
+        new_overlap = new_df[new_df['_key'].isin(overlapping_keys)].copy()
+        existing_overlap = existing_df[existing_df['_key'].isin(overlapping_keys)].copy()
+        
+        # Create lookup dicts for dates and status
+        new_dates = new_overlap.set_index('_key')['Date'].to_dict()
+        existing_dates = existing_overlap.set_index('_key')['Date'].to_dict()
+        
+        # Determine which source to use for each key
+        keys_use_new = []
+        keys_use_existing = []
+        
         for key in overlapping_keys:
-            new_row = new_df[new_df['_key'] == key].iloc[0]
-            existing_row = existing_df[existing_df['_key'] == key].iloc[0]
-            
-            new_date = new_row['Date']
-            existing_date = existing_row['Date']
-            
-            if new_date >= existing_date:
-                # New record is same date or newer - use new data
-                result_rows.append(new_df[new_df['_key'] == key])
-                # Check if status actually changed
-                if 'Status' in new_row.index and 'Status' in existing_row.index:
-                    if new_row['Status'] != existing_row['Status']:
-                        status_updates_count += 1
+            if new_dates.get(key, pd.Timestamp.min) >= existing_dates.get(key, pd.Timestamp.min):
+                keys_use_new.append(key)
             else:
-                # Existing record is newer - keep existing
-                result_rows.append(existing_df[existing_df['_key'] == key])
+                keys_use_existing.append(key)
+        
+        # Add records from new where new date is >= existing date
+        if keys_use_new:
+            records_from_new = new_overlap[new_overlap['_key'].isin(keys_use_new)]
+            result_parts.append(records_from_new)
+            
+            # Count status updates (where status changed and we used new data)
+            if 'Status' in new_overlap.columns and 'Status' in existing_overlap.columns:
+                new_status = new_overlap.set_index('_key')['Status'].to_dict()
+                existing_status = existing_overlap.set_index('_key')['Status'].to_dict()
+                for key in keys_use_new:
+                    if new_status.get(key) != existing_status.get(key):
+                        status_updates_count += 1
+        
+        # Add records from existing where existing date is > new date
+        if keys_use_existing:
+            records_from_existing = existing_overlap[existing_overlap['_key'].isin(keys_use_existing)]
+            result_parts.append(records_from_existing)
     
     # Combine all results
-    merged_df = pd.concat(result_rows, ignore_index=True)
+    if result_parts:
+        merged_df = pd.concat(result_parts, ignore_index=True)
+    else:
+        merged_df = pd.DataFrame()
     
     # Drop helper column
-    merged_df = merged_df.drop(columns=['_key'])
+    if '_key' in merged_df.columns:
+        merged_df = merged_df.drop(columns=['_key'])
     
     return merged_df, new_records_count, status_updates_count
 

@@ -497,7 +497,11 @@ def main():
                         success, stats, message = upload_ga_sf_data(st.session_state.ga_sf_data)
                         if success:
                             st.success(message)
-                            st.info(f"📊 **New Records:** {stats['new_records']} | **Status Updates:** {stats['status_updates']} | **Total Rows in BQ:** {stats['total_rows']}")
+                            st.info(f"📊 **New Records:** {stats['new_records']} | **Total Rows in BQ:** {stats['total_rows']}")
+                            # Display status breakdown if any
+                            if stats['status_updates']:
+                                breakdown_text = " | ".join([f"{k}: {v}" for k, v in stats['status_updates'].items()])
+                                st.info(f"🔄 **Status Updates:** {breakdown_text}")
                         else:
                             st.error(message)
             
@@ -542,7 +546,11 @@ def main():
                             success, stats, message = upload_ga_sf_ne_data(st.session_state.ga_sf_ne_data)
                             if success:
                                 st.success(message)
-                                st.info(f"📊 **New Records:** {stats['new_records']} | **Status Updates:** {stats['status_updates']} | **Total Rows in BQ:** {stats['total_rows']}")
+                                st.info(f"📊 **New Records:** {stats['new_records']} | **Total Rows in BQ:** {stats['total_rows']}")
+                                # Display status breakdown if any
+                                if stats['status_updates']:
+                                    breakdown_text = " | ".join([f"{k}: {v}" for k, v in stats['status_updates'].items()])
+                                    st.info(f"🔄 **Status Updates:** {breakdown_text}")
                             else:
                                 st.error(message)
                 

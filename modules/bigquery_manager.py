@@ -173,21 +173,35 @@ def get_existing_data(client: bigquery.Client, table_name: str) -> pd.DataFrame:
 def merge_with_existing_data(
     new_df: pd.DataFrame, 
     existing_df: pd.DataFrame
-) -> Tuple[pd.DataFrame, int, int]:
+) -> Tuple[pd.DataFrame, int, dict]:
     """
     Merge new data with existing BigQuery data using date-based comparison.
-    For each Mobile-Month-Year key, keeps the record with the LATEST date.
-    Uses vectorized operations for performance.
+    For each Mobile-Month-Year key:
+    - If dates differ: keeps the record with the LATEST date
+    - If dates are same: keeps the record with higher STATUS PRIORITY
+    
+    Status Priority: Converted > Closed > Quoted > Open > Prospect
     
     Args:
         new_df: New data to upload
         existing_df: Existing data in BigQuery
         
     Returns:
-        Tuple of (merged_df, new_records_count, status_updates_count)
+        Tuple of (merged_df, new_records_count, status_breakdown_dict)
+        status_breakdown_dict: {"Old Status -> New Status": count, ...}
     """
+    # Status priority mapping (higher = higher priority)
+    STATUS_PRIORITY = {
+        'Converted': 5,
+        'Closed': 4,
+        'Quoted': 3,
+        'Open': 2,
+        'Prospect': 1,
+        'Not Found': 0
+    }
+    
     if existing_df.empty:
-        return new_df, len(new_df), 0
+        return new_df, len(new_df), {}
     
     new_df = new_df.copy()
     existing_df = existing_df.copy()
@@ -214,10 +228,11 @@ def merge_with_existing_data(
     # Keys only in existing (keep as-is)
     only_existing_keys = existing_keys - new_keys
     
-    # Keys in both (need date-based comparison)
+    # Keys in both (need comparison)
     overlapping_keys = existing_keys.intersection(new_keys)
     
     result_parts = []
+    status_breakdown = {}  # {"Old -> New": count}
     
     # 1. Add new-only records
     new_only_df = new_df[new_df['_key'].isin(only_new_keys)]
@@ -229,41 +244,58 @@ def merge_with_existing_data(
     if not existing_only_df.empty:
         result_parts.append(existing_only_df)
     
-    # 3. For overlapping keys - vectorized date comparison
-    status_updates_count = 0
+    # 3. For overlapping keys - date + priority comparison
     if overlapping_keys:
         # Get overlapping records from both dataframes
         new_overlap = new_df[new_df['_key'].isin(overlapping_keys)].copy()
         existing_overlap = existing_df[existing_df['_key'].isin(overlapping_keys)].copy()
         
-        # Create lookup dicts for dates and status
+        # Create lookup dicts
         new_dates = new_overlap.set_index('_key')['Date'].to_dict()
         existing_dates = existing_overlap.set_index('_key')['Date'].to_dict()
+        new_status = new_overlap.set_index('_key')['Status'].to_dict() if 'Status' in new_overlap.columns else {}
+        existing_status = existing_overlap.set_index('_key')['Status'].to_dict() if 'Status' in existing_overlap.columns else {}
         
         # Determine which source to use for each key
         keys_use_new = []
         keys_use_existing = []
         
         for key in overlapping_keys:
-            if new_dates.get(key, pd.Timestamp.min) >= existing_dates.get(key, pd.Timestamp.min):
+            new_date = new_dates.get(key, pd.Timestamp.min)
+            existing_date = existing_dates.get(key, pd.Timestamp.min)
+            
+            if new_date > existing_date:
+                # New date is strictly later - use new
                 keys_use_new.append(key)
-            else:
+            elif new_date < existing_date:
+                # Existing date is strictly later - use existing
                 keys_use_existing.append(key)
+            else:
+                # Dates are equal - use status priority
+                new_stat = new_status.get(key, 'Not Found')
+                existing_stat = existing_status.get(key, 'Not Found')
+                new_priority = STATUS_PRIORITY.get(new_stat, 0)
+                existing_priority = STATUS_PRIORITY.get(existing_stat, 0)
+                
+                if new_priority >= existing_priority:
+                    keys_use_new.append(key)
+                else:
+                    keys_use_existing.append(key)
         
-        # Add records from new where new date is >= existing date
+        # Add records from new
         if keys_use_new:
             records_from_new = new_overlap[new_overlap['_key'].isin(keys_use_new)]
             result_parts.append(records_from_new)
             
-            # Count status updates (where status changed and we used new data)
-            if 'Status' in new_overlap.columns and 'Status' in existing_overlap.columns:
-                new_status = new_overlap.set_index('_key')['Status'].to_dict()
-                existing_status = existing_overlap.set_index('_key')['Status'].to_dict()
-                for key in keys_use_new:
-                    if new_status.get(key) != existing_status.get(key):
-                        status_updates_count += 1
+            # Track status changes
+            for key in keys_use_new:
+                old_stat = existing_status.get(key, 'Not Found')
+                new_stat = new_status.get(key, 'Not Found')
+                if old_stat != new_stat:
+                    change_key = f"{old_stat} → {new_stat}"
+                    status_breakdown[change_key] = status_breakdown.get(change_key, 0) + 1
         
-        # Add records from existing where existing date is > new date
+        # Add records from existing
         if keys_use_existing:
             records_from_existing = existing_overlap[existing_overlap['_key'].isin(keys_use_existing)]
             result_parts.append(records_from_existing)
@@ -278,7 +310,7 @@ def merge_with_existing_data(
     if '_key' in merged_df.columns:
         merged_df = merged_df.drop(columns=['_key'])
     
-    return merged_df, new_records_count, status_updates_count
+    return merged_df, new_records_count, status_breakdown
 
 
 def prepare_upload_df(df: pd.DataFrame, target_columns: list) -> pd.DataFrame:
@@ -366,7 +398,7 @@ def upload_ga_sf_data(
         return True, stats, message
         
     except Exception as e:
-        return False, {'new_records': 0, 'status_updates': 0, 'total_rows': 0}, f"Error uploading to BigQuery: {str(e)}"
+        return False, {'new_records': 0, 'status_updates': {}, 'total_rows': 0}, f"Error uploading to BigQuery: {str(e)}"
 
 
 def upload_ga_sf_ne_data(
@@ -417,7 +449,7 @@ def upload_ga_sf_ne_data(
         else:
             merged_df = upload_df
             new_records = len(upload_df)
-            status_updates = 0
+            status_updates = {}
         
         # Upload to BigQuery
         job_config = bigquery.LoadJobConfig(
@@ -441,4 +473,4 @@ def upload_ga_sf_ne_data(
         return True, stats, message
         
     except Exception as e:
-        return False, {'new_records': 0, 'status_updates': 0, 'total_rows': 0}, f"Error uploading to BigQuery: {str(e)}"
+        return False, {'new_records': 0, 'status_updates': {}, 'total_rows': 0}, f"Error uploading to BigQuery: {str(e)}"

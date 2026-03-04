@@ -297,8 +297,8 @@ def map_ne_data(mapped_df: pd.DataFrame, ne_df: pd.DataFrame) -> pd.DataFrame:
     mapped_df = mapped_df.copy()
     ne_df = ne_df.copy()
     
-    # Standardize column names (case-insensitive)
-    col_mapping = {col.upper().strip(): col for col in ne_df.columns}
+    # Standardize column names (case-insensitive and remove invisible BOM chars)
+    col_mapping = {str(col).upper().strip().replace('\ufeff', '').replace('\xef\xbb\xbf', ''): col for col in ne_df.columns}
     
     if 'LEAD_MOBILE' in col_mapping and 'Mobile' not in ne_df.columns:
         ne_df = ne_df.rename(columns={col_mapping['LEAD_MOBILE']: 'Mobile'})
@@ -370,8 +370,8 @@ def map_bhk_data(mapped_df: pd.DataFrame, bhk_df: pd.DataFrame) -> pd.DataFrame:
     mapped_df = mapped_df.copy()
     bhk_df = bhk_df.copy()
     
-    # Standardize column names (case-insensitive)
-    col_mapping = {col.upper().strip(): col for col in bhk_df.columns}
+    # Standardize column names (case-insensitive and remove invisible BOM chars)
+    col_mapping = {str(col).upper().strip().replace('\ufeff', '').replace('\xef\xbb\xbf', ''): col for col in bhk_df.columns}
     
     if 'LEAD_MOBILE' in col_mapping and 'Mobile' not in bhk_df.columns:
         bhk_df = bhk_df.rename(columns={col_mapping['LEAD_MOBILE']: 'Mobile'})

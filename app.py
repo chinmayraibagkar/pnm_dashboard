@@ -631,17 +631,22 @@ def main():
                     )
                 
                 with col2:
-                    if st.button("☁️ Upload to BigQuery", key="upload_bhk", width="stretch"):
-                        with st.spinner("Uploading to BigQuery..."):
-                            success, stats, message = upload_bhk_data(st.session_state.ga_sf_bhk_data)
-                            if success:
-                                st.success(message)
-                                st.info(f"📊 **New Records:** {stats['new_records']} | **Total Rows in BQ:** {stats['total_rows']}")
-                                if stats['status_updates']:
-                                    breakdown_text = " | ".join([f"{k}: {v}" for k, v in stats['status_updates'].items()])
-                                    st.info(f"🔄 **Status Updates:** {breakdown_text}")
-                            else:
-                                st.error(message)
+                    # BHK upload option should only be available if it is mapped with NE_GA_SF_Mapped
+                    if st.session_state.ga_sf_ne_data is None:
+                        st.warning("⚠️ Upload to BQ disabled: Must map with NE data first.")
+                        st.button("☁️ Upload to BigQuery (Disabled)", disabled=True, width="stretch", key="upload_bhk_disabled")
+                    else:
+                        if st.button("☁️ Upload to BigQuery", key="upload_bhk", width="stretch"):
+                            with st.spinner("Uploading to BigQuery..."):
+                                success, stats, message = upload_bhk_data(st.session_state.ga_sf_bhk_data)
+                                if success:
+                                    st.success(message)
+                                    st.info(f"📊 **New Records:** {stats['new_records']} | **Total Rows in BQ:** {stats['total_rows']}")
+                                    if stats['status_updates']:
+                                        breakdown_text = " | ".join([f"{k}: {v}" for k, v in stats['status_updates'].items()])
+                                        st.info(f"🔄 **Status Updates:** {breakdown_text}")
+                                else:
+                                    st.error(message)
                 
                 with col3:
                     if st.button("🔴 Reset BQ Table", key="reset_bhk_btn", width="stretch"):

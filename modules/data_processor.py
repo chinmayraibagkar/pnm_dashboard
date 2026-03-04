@@ -297,15 +297,18 @@ def map_ne_data(mapped_df: pd.DataFrame, ne_df: pd.DataFrame) -> pd.DataFrame:
     mapped_df = mapped_df.copy()
     ne_df = ne_df.copy()
     
-    # Standardize column names
-    col_mapping = {col.upper(): col for col in ne_df.columns}
+    # Standardize column names (case-insensitive)
+    col_mapping = {col.upper().strip(): col for col in ne_df.columns}
+    
     if 'LEAD_MOBILE' in col_mapping and 'Mobile' not in ne_df.columns:
         ne_df = ne_df.rename(columns={col_mapping['LEAD_MOBILE']: 'Mobile'})
-    if 'MOBILE' in col_mapping and 'Mobile' not in ne_df.columns:
+    elif 'MOBILE' in col_mapping and 'Mobile' not in ne_df.columns:
         ne_df = ne_df.rename(columns={col_mapping['MOBILE']: 'Mobile'})
-    if 'DATE' in col_mapping:
+        
+    if 'DATE' in col_mapping and 'DATE' not in ne_df.columns:
          ne_df = ne_df.rename(columns={col_mapping['DATE']: 'DATE'})
-    if 'CUSTOMER_TYPE' in col_mapping:
+         
+    if 'CUSTOMER_TYPE' in col_mapping and 'CUSTOMER_TYPE' not in ne_df.columns:
          ne_df = ne_df.rename(columns={col_mapping['CUSTOMER_TYPE']: 'CUSTOMER_TYPE'})
     
     # Ensure Mobile is string
@@ -367,15 +370,18 @@ def map_bhk_data(mapped_df: pd.DataFrame, bhk_df: pd.DataFrame) -> pd.DataFrame:
     mapped_df = mapped_df.copy()
     bhk_df = bhk_df.copy()
     
-    # Standardize column names
-    col_mapping = {col.upper(): col for col in bhk_df.columns}
+    # Standardize column names (case-insensitive)
+    col_mapping = {col.upper().strip(): col for col in bhk_df.columns}
+    
     if 'LEAD_MOBILE' in col_mapping and 'Mobile' not in bhk_df.columns:
         bhk_df = bhk_df.rename(columns={col_mapping['LEAD_MOBILE']: 'Mobile'})
-    if 'MOBILE' in col_mapping and 'Mobile' not in bhk_df.columns:
+    elif 'MOBILE' in col_mapping and 'Mobile' not in bhk_df.columns:
         bhk_df = bhk_df.rename(columns={col_mapping['MOBILE']: 'Mobile'})
-    if 'OPP_CREATED_DATE' in col_mapping:
+        
+    if 'OPP_CREATED_DATE' in col_mapping and 'OPP_CREATED_DATE' not in bhk_df.columns:
          bhk_df = bhk_df.rename(columns={col_mapping['OPP_CREATED_DATE']: 'OPP_CREATED_DATE'})
-    if 'PACKAGE_NAME' in col_mapping:
+         
+    if 'PACKAGE_NAME' in col_mapping and 'PACKAGE_NAME' not in bhk_df.columns:
          bhk_df = bhk_df.rename(columns={col_mapping['PACKAGE_NAME']: 'PACKAGE_NAME'})
     
     # Ensure Mobile is string

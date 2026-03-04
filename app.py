@@ -364,7 +364,7 @@ def main():
                         # Process NE data if uploaded
                         if ne_file is not None:
                             try:
-                                ne_df = pd.read_csv(ne_file, encoding='latin1')
+                                ne_df = pd.read_csv(ne_file, encoding='utf-8-sig')
                                 st.session_state.ga_sf_ne_data = map_ne_data(
                                     st.session_state.ga_sf_data, 
                                     ne_df
@@ -375,7 +375,7 @@ def main():
                         # Process BHK data if uploaded
                         if bhk_file is not None:
                             try:
-                                bhk_df = pd.read_csv(bhk_file, encoding='latin1')
+                                bhk_df = pd.read_csv(bhk_file, encoding='utf-8-sig')
                                 base_df = st.session_state.ga_sf_ne_data if st.session_state.ga_sf_ne_data is not None else st.session_state.ga_sf_data
                                 st.session_state.ga_sf_bhk_data = map_bhk_data(
                                     base_df, 
@@ -399,14 +399,14 @@ def main():
                 else:
                     with st.spinner("Mapping NE data..."):
                         try:
-                            ne_df = pd.read_csv(ne_file, encoding='latin1')
+                            ne_df = pd.read_csv(ne_file, encoding='utf-8-sig')
                             st.session_state.ga_sf_ne_data = map_ne_data(
                                 st.session_state.ga_sf_data, 
                                 ne_df
                             )
                             # Remap BHK data if it was already processed to reflect NE baseline
                             if bhk_file is not None:
-                                bhk_df = pd.read_csv(bhk_file, encoding='latin1')
+                                bhk_df = pd.read_csv(bhk_file, encoding='utf-8-sig')
                                 st.session_state.ga_sf_bhk_data = map_bhk_data(
                                     st.session_state.ga_sf_ne_data, 
                                     bhk_df
@@ -424,7 +424,7 @@ def main():
                 else:
                     with st.spinner("Mapping BHK data..."):
                         try:
-                            bhk_df = pd.read_csv(bhk_file, encoding='latin1')
+                            bhk_df = pd.read_csv(bhk_file, encoding='utf-8-sig')
                             base_df = st.session_state.ga_sf_ne_data if st.session_state.ga_sf_ne_data is not None else st.session_state.ga_sf_data
                             st.session_state.ga_sf_bhk_data = map_bhk_data(
                                 base_df, 

@@ -6,10 +6,10 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
-from modules.config import SF_REQUIRED_COLUMNS, BQ_TABLE_GA_SF, BQ_TABLE_GA_SF_NE
+from modules.config import SF_REQUIRED_COLUMNS, BQ_TABLE_GA_SF, BQ_TABLE_GA_SF_NE, BQ_TABLE_BHK
 from modules.ga4_client import get_ga4_client
-from modules.data_processor import process_ga_data, map_ne_data, get_bimonth_date_range
-from modules.bigquery_manager import upload_ga_sf_data, upload_ga_sf_ne_data, reset_table
+from modules.data_processor import process_ga_data, map_ne_data, map_bhk_data, get_bimonth_date_range
+from modules.bigquery_manager import upload_ga_sf_data, upload_ga_sf_ne_data, upload_bhk_data, reset_table
 from modules.auth import Authenticator
 from modules.email_alerts import send_security_alert
 
@@ -278,12 +278,16 @@ def main():
         st.session_state.ga_sf_data = None
     if 'ga_sf_ne_data' not in st.session_state:
         st.session_state.ga_sf_ne_data = None
+    if 'ga_sf_bhk_data' not in st.session_state:
+        st.session_state.ga_sf_bhk_data = None
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
     if 'show_reset_ga_sf' not in st.session_state:
         st.session_state.show_reset_ga_sf = False
     if 'show_reset_ne' not in st.session_state:
         st.session_state.show_reset_ne = False
+    if 'show_reset_bhk' not in st.session_state:
+        st.session_state.show_reset_bhk = False
     
     # Sidebar
     with st.sidebar:
@@ -312,7 +316,14 @@ def main():
         ne_file = st.file_uploader(
             "Upload NE Data (Optional)", 
             type=['csv'],
-            help="File with Mobile/LEAD_MOBILE, LEAD_TYPE, Revenue columns"
+            help="File with DATE, Customer_Type, Mobile columns"
+        )
+        
+        # BHK file upload (optional)
+        bhk_file = st.file_uploader(
+            "Upload BHK Data (Optional)", 
+            type=['csv'],
+            help="File with OPP_CREATED_DATE, Mobile, PACKAGE_NAME columns"
         )
         
         st.markdown("---")
@@ -352,17 +363,26 @@ def main():
                         
                         # Process NE data if uploaded
                         if ne_file is not None:
-                            ne_df = pd.read_csv(ne_file, encoding='latin1')
-                            # Handle LEAD_MOBILE column name
-                            if 'LEAD_MOBILE' in ne_df.columns and 'Mobile' not in ne_df.columns:
-                                ne_df = ne_df.rename(columns={'LEAD_MOBILE': 'Mobile'})
-                            if 'Mobile' in ne_df.columns:
+                            try:
+                                ne_df = pd.read_csv(ne_file, encoding='latin1')
                                 st.session_state.ga_sf_ne_data = map_ne_data(
                                     st.session_state.ga_sf_data, 
                                     ne_df
                                 )
-                            else:
-                                st.warning("NE file must contain 'Mobile' or 'LEAD_MOBILE' column for mapping.")
+                            except Exception as e:
+                                st.error(f"Error processing NE data: {str(e)}")
+                        
+                        # Process BHK data if uploaded
+                        if bhk_file is not None:
+                            try:
+                                bhk_df = pd.read_csv(bhk_file, encoding='latin1')
+                                base_df = st.session_state.ga_sf_ne_data if st.session_state.ga_sf_ne_data is not None else st.session_state.ga_sf_data
+                                st.session_state.ga_sf_bhk_data = map_bhk_data(
+                                    base_df, 
+                                    bhk_df
+                                )
+                            except Exception as e:
+                                st.error(f"Error processing BHK data: {str(e)}")
                         
                         st.session_state.data_loaded = True
                         st.success("Data processed successfully!")
@@ -380,20 +400,40 @@ def main():
                     with st.spinner("Mapping NE data..."):
                         try:
                             ne_df = pd.read_csv(ne_file, encoding='latin1')
-                            # Handle LEAD_MOBILE column name
-                            if 'LEAD_MOBILE' in ne_df.columns and 'Mobile' not in ne_df.columns:
-                                ne_df = ne_df.rename(columns={'LEAD_MOBILE': 'Mobile'})
-                            if 'Mobile' in ne_df.columns:
-                                st.session_state.ga_sf_ne_data = map_ne_data(
-                                    st.session_state.ga_sf_data, 
-                                    ne_df
+                            st.session_state.ga_sf_ne_data = map_ne_data(
+                                st.session_state.ga_sf_data, 
+                                ne_df
+                            )
+                            # Remap BHK data if it was already processed to reflect NE baseline
+                            if bhk_file is not None:
+                                bhk_df = pd.read_csv(bhk_file, encoding='latin1')
+                                st.session_state.ga_sf_bhk_data = map_bhk_data(
+                                    st.session_state.ga_sf_ne_data, 
+                                    bhk_df
                                 )
-                                st.success("NE data mapped successfully!")
-                                st.rerun()
-                            else:
-                                st.error("NE file must contain 'Mobile' or 'LEAD_MOBILE' column for mapping.")
+                            st.success("NE data mapped successfully!")
+                            st.rerun()
                         except Exception as e:
                             st.error(f"Error mapping NE data: {str(e)}")
+                            
+        # Separate button to process BHK data
+        if st.session_state.data_loaded and st.session_state.ga_sf_data is not None:
+            if st.button("📦 Map BHK Data", width="stretch"):
+                if bhk_file is None:
+                    st.error("Please upload BHK data file first!")
+                else:
+                    with st.spinner("Mapping BHK data..."):
+                        try:
+                            bhk_df = pd.read_csv(bhk_file, encoding='latin1')
+                            base_df = st.session_state.ga_sf_ne_data if st.session_state.ga_sf_ne_data is not None else st.session_state.ga_sf_data
+                            st.session_state.ga_sf_bhk_data = map_bhk_data(
+                                base_df, 
+                                bhk_df
+                            )
+                            st.success("BHK data mapped successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error mapping BHK data: {str(e)}")
         
         # Clear cache button
         if st.button("🗑️ Clear Cache", width="stretch"):
@@ -401,6 +441,7 @@ def main():
             st.cache_resource.clear()
             st.session_state.ga_sf_data = None
             st.session_state.ga_sf_ne_data = None
+            st.session_state.ga_sf_bhk_data = None
             st.session_state.data_loaded = False
             st.rerun()
     
@@ -468,7 +509,7 @@ def main():
     st.markdown("---")
     
     # Tabs
-    tab1, tab2 = st.tabs(["📊 GA-SF Mapped Data", "📁 NE Mapped Data"])
+    tab1, tab2, tab3 = st.tabs(["📊 GA-SF Mapped Data", "📁 NE Mapped Data", "📦 BHK Mapped Data"])
     
     with tab1:
         st.subheader("GA-SF Mapped Data")
@@ -562,6 +603,54 @@ def main():
                 if st.session_state.show_reset_ne:
                     st.warning("⚠️ This will DELETE all existing data in the NE table!")
                     handle_reset_with_password(BQ_TABLE_GA_SF_NE, "NE Table")
+                    
+    with tab3:
+        st.subheader("BHK Mapped Data")
+        
+        if st.session_state.ga_sf_bhk_data is None:
+            st.info("No BHK data uploaded. Upload BHK data file in the sidebar and click 'Map BHK Data'.")
+        else:
+            bhk_filtered = apply_filters(st.session_state.ga_sf_bhk_data, filters)
+            
+            if bhk_filtered.empty:
+                st.warning("No data available for the selected filters.")
+            else:
+                # Data table
+                st.dataframe(bhk_filtered, width="stretch", height=400)
+                
+                # Action buttons
+                col1, col2, col3 = st.columns([1, 1, 1])
+                
+                with col1:
+                    st.download_button(
+                        label="📥 Download CSV",
+                        data=bhk_filtered.to_csv(index=False),
+                        file_name=f"BHK_GA_SF_Mapped_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                        width="stretch"
+                    )
+                
+                with col2:
+                    if st.button("☁️ Upload to BigQuery", key="upload_bhk", width="stretch"):
+                        with st.spinner("Uploading to BigQuery..."):
+                            success, stats, message = upload_bhk_data(st.session_state.ga_sf_bhk_data)
+                            if success:
+                                st.success(message)
+                                st.info(f"📊 **New Records:** {stats['new_records']} | **Total Rows in BQ:** {stats['total_rows']}")
+                                if stats['status_updates']:
+                                    breakdown_text = " | ".join([f"{k}: {v}" for k, v in stats['status_updates'].items()])
+                                    st.info(f"🔄 **Status Updates:** {breakdown_text}")
+                            else:
+                                st.error(message)
+                
+                with col3:
+                    if st.button("🔴 Reset BQ Table", key="reset_bhk_btn", width="stretch"):
+                        st.session_state.show_reset_bhk = True
+                
+                # Show reset dialog
+                if st.session_state.show_reset_bhk:
+                    st.warning("⚠️ This will DELETE all existing data in the BHK table!")
+                    handle_reset_with_password(BQ_TABLE_BHK, "BHK Table")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from google.oauth2 import service_account
 from google.api_core.exceptions import NotFound
 
 from .config import (
-    BQ_PROJECT_ID, BQ_DATASET_ID, BQ_TABLE_GA_SF, BQ_TABLE_GA_SF_NE,
+    BQ_PROJECT_ID, BQ_DATASET_ID, BQ_TABLE_GA_SF, BQ_TABLE_GA_SF_NE, BQ_TABLE_BHK,
     get_gcp_credentials
 )
 
@@ -133,26 +133,20 @@ def reset_table(table_name: str) -> Tuple[bool, str]:
         client = get_bq_client()
         full_table_id = f"{client.project}.{BQ_DATASET_ID}.{table_name}"
 
-        # Determine schema based on table name
-        if table_name == BQ_TABLE_GA_SF:
-            schema = GA_SF_SCHEMA
-        else:
-            # For NE table, use GA_SF schema as base
-            schema = GA_SF_SCHEMA
-
         # Drop table if exists
         try:
             client.delete_table(full_table_id)
         except NotFound:
             pass  # Table doesn't exist, that's fine
 
-        # Create fresh table
-        table = bigquery.Table(full_table_id, schema=schema)
-        table.time_partitioning = bigquery.TimePartitioning(
-            type_=bigquery.TimePartitioningType.DAY,
-            field="Date"
-        )
-        client.create_table(table)
+        if table_name == BQ_TABLE_GA_SF:
+            # Create fresh table
+            table = bigquery.Table(full_table_id, schema=GA_SF_SCHEMA)
+            table.time_partitioning = bigquery.TimePartitioning(
+                type_=bigquery.TimePartitioningType.DAY,
+                field="Date"
+            )
+            client.create_table(table)
 
         return True, f"Successfully reset table {table_name}"
 
@@ -345,9 +339,15 @@ def _build_merge_sql(
     # Build the UPDATE SET clause (all columns except the key columns)
     key_cols = {'Mobile', 'Month', 'Year'}
     update_cols = [c for c in columns if c not in key_cols]
-    update_set = ",\n        ".join(
-        [f"target.`{c}` = source.`{c}`" for c in update_cols]
-    )
+    
+    update_statements = []
+    for c in update_cols:
+        if c in ['CUSTOMER_TYPE', 'PACKAGE_NAME']:
+            update_statements.append(f"target.`{c}` = COALESCE(target.`{c}`, source.`{c}`)")
+        else:
+            update_statements.append(f"target.`{c}` = source.`{c}`")
+            
+    update_set = ",\n        ".join(update_statements)
 
     # Build the INSERT columns and values
     insert_cols = ", ".join([f"`{c}`" for c in columns])
@@ -562,6 +562,79 @@ def upload_ga_sf_ne_data(
                 'total_rows': len(upload_df)
             }
             return True, stats, f"Successfully uploaded to {BQ_TABLE_GA_SF_NE}"
+
+    except Exception as e:
+        return False, {'new_records': 0, 'status_updates': {}, 'total_rows': 0}, f"Error uploading to BigQuery: {str(e)}"
+
+
+def upload_bhk_data(
+    df: pd.DataFrame
+) -> Tuple[bool, dict, str]:
+    """
+    Upload BHK mapped data to BigQuery using SQL MERGE with a temp table.
+    Dynamically creates schema based on DataFrame columns.
+    For each Mobile-Month-Year key, keeps the record with the LATEST date.
+
+    Args:
+        df: DataFrame to upload
+
+    Returns:
+        Tuple of (success, stats_dict, message)
+        stats_dict contains: new_records, status_updates, total_rows
+    """
+    try:
+        client = get_bq_client()
+
+        # Create dynamic schema based on DataFrame columns
+        schema = []
+        for col in df.columns:
+            dtype = df[col].dtype
+            if col == 'Date':
+                schema.append(bigquery.SchemaField(col, "DATE", mode="REQUIRED"))
+            elif dtype in ['int64', 'int32']:
+                schema.append(bigquery.SchemaField(col, "INTEGER", mode="NULLABLE"))
+            elif dtype == 'float64':
+                schema.append(bigquery.SchemaField(col, "FLOAT", mode="NULLABLE"))
+            else:
+                schema.append(bigquery.SchemaField(col, "STRING", mode="NULLABLE"))
+
+        # Ensure table exists
+        ensure_table_exists(client, BQ_TABLE_BHK, schema)
+
+        # Prepare upload DataFrame
+        upload_df = df.copy()
+        if 'Date' in upload_df.columns:
+            upload_df['Date'] = pd.to_datetime(upload_df['Date']).dt.date
+
+        columns = list(upload_df.columns)
+        has_status = 'Status' in columns
+        has_merge_keys = all(c in columns for c in ['Mobile', 'Month', 'Year'])
+
+        if has_merge_keys:
+            return _execute_merge_via_temp_table(
+                client=client,
+                df=upload_df,
+                table_name=BQ_TABLE_BHK,
+                schema=schema,
+                columns=columns,
+                has_status_col=has_status
+            )
+        else:
+            # Fallback: no merge keys available, do a simple append
+            full_table_id = f"{client.project}.{BQ_DATASET_ID}.{BQ_TABLE_BHK}"
+            job_config = bigquery.LoadJobConfig(
+                write_disposition="WRITE_TRUNCATE",
+                schema=schema
+            )
+            job = client.load_table_from_dataframe(upload_df, full_table_id, job_config=job_config)
+            job.result()
+
+            stats = {
+                'new_records': len(upload_df),
+                'status_updates': {},
+                'total_rows': len(upload_df)
+            }
+            return True, stats, f"Successfully uploaded to {BQ_TABLE_BHK}"
 
     except Exception as e:
         return False, {'new_records': 0, 'status_updates': {}, 'total_rows': 0}, f"Error uploading to BigQuery: {str(e)}"

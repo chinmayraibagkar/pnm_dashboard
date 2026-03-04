@@ -7,7 +7,8 @@ import streamlit as st
 BQ_PROJECT_ID = "dashbords-450707"
 BQ_DATASET_ID = "porter_pnm"
 BQ_TABLE_GA_SF = "GA_SF_Mapped"
-BQ_TABLE_GA_SF_NE = "GA_SF_NE_Mapped"
+BQ_TABLE_GA_SF_NE = "NE_GA_SF_Mapped"
+BQ_TABLE_BHK = "BHK_NE_GA_SF_Mapped"
 
 # GA4 Configuration
 GA_SCOPES = ['https://www.googleapis.com/auth/analytics.readonly']

@@ -280,12 +280,13 @@ def map_salesforce_data(ga_df: pd.DataFrame, sf_df: pd.DataFrame) -> pd.DataFram
 
 def map_ne_data(mapped_df: pd.DataFrame, ne_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Map NE data columns to GA-SF mapped data based on mobile number.
+    Map NE data columns to GA-SF mapped data based on mobile number and 2-month period.
     Uses left join to keep all GA-SF records.
+    Deduplicates NE data keeping the oldest CUSTOMER_TYPE per 2-month group.
     
     Args:
-        mapped_df: GA-SF mapped DataFrame with Mobile column
-        ne_df: NE DataFrame with Mobile and other columns
+        mapped_df: GA-SF mapped DataFrame with Mobile, Month, Year columns
+        ne_df: NE DataFrame with Mobile, DATE, CUSTOMER_TYPE
         
     Returns:
         DataFrame with NE columns mapped
@@ -296,21 +297,123 @@ def map_ne_data(mapped_df: pd.DataFrame, ne_df: pd.DataFrame) -> pd.DataFrame:
     mapped_df = mapped_df.copy()
     ne_df = ne_df.copy()
     
+    # Standardize column names
+    col_mapping = {col.upper(): col for col in ne_df.columns}
+    if 'LEAD_MOBILE' in col_mapping and 'Mobile' not in ne_df.columns:
+        ne_df = ne_df.rename(columns={col_mapping['LEAD_MOBILE']: 'Mobile'})
+    if 'MOBILE' in col_mapping and 'Mobile' not in ne_df.columns:
+        ne_df = ne_df.rename(columns={col_mapping['MOBILE']: 'Mobile'})
+    if 'DATE' in col_mapping:
+         ne_df = ne_df.rename(columns={col_mapping['DATE']: 'DATE'})
+    if 'CUSTOMER_TYPE' in col_mapping:
+         ne_df = ne_df.rename(columns={col_mapping['CUSTOMER_TYPE']: 'CUSTOMER_TYPE'})
+    
     # Ensure Mobile is string
     ne_df['Mobile'] = ne_df['Mobile'].astype(str)
     
-    # Get columns to map (exclude date-like columns)
-    date_patterns = ['date', 'Date', 'DATE', 'created', 'Created', 'CREATED']
-    cols_to_map = [
-        col for col in ne_df.columns 
-        if col != 'Mobile' and not any(pat in col for pat in date_patterns)
-    ]
+    # Keep only necessary columns
+    required_cols = ['DATE', 'CUSTOMER_TYPE', 'Mobile']
+    available_cols = [c for c in required_cols if c in ne_df.columns]
+    ne_df = ne_df[available_cols].copy()
     
-    # Create lookup DataFramefor merging
-    ne_lookup = ne_df[['Mobile'] + cols_to_map].drop_duplicates(subset=['Mobile'], keep='first')
+    if 'DATE' not in ne_df.columns or 'CUSTOMER_TYPE' not in ne_df.columns:
+        raise ValueError("NE file must contain 'DATE' and 'CUSTOMER_TYPE' columns.")
+    
+    # Parse date (Format: DD-MM-YYYY)
+    ne_df['DATE'] = pd.to_datetime(ne_df['DATE'], format='%d-%m-%Y', errors='coerce')
+    
+    # Create period-year columns for deduplication
+    ne_df['_Year'] = ne_df['DATE'].dt.year
+    ne_df['_Period'] = ne_df['DATE'].dt.month.apply(lambda x: get_bimonth_period(x) if pd.notna(x) else 0)
+    
+    # Sort by Mobile, Year, Period, Date (ascending for oldest)
+    ne_df = ne_df.sort_values(['Mobile', '_Year', '_Period', 'DATE'], ascending=True)
+    
+    # Deduplicate keeping oldest classification
+    ne_df = ne_df.drop_duplicates(subset=['Mobile', '_Year', '_Period'], keep='first')
+    
+    # Prepare mapped_df for joining
+    if 'Month' not in mapped_df.columns or 'Year' not in mapped_df.columns:
+         mapped_df = add_month_year_columns(mapped_df)
+    
+    mapped_df['_Period'] = mapped_df['Month'].apply(lambda x: get_bimonth_period(x) if pd.notna(x) else 0)
+    ne_lookup = ne_df[['Mobile', '_Year', '_Period', 'CUSTOMER_TYPE']].rename(columns={'_Year': 'Year'})
     
     # Merge using left join
-    result = mapped_df.merge(ne_lookup, on='Mobile', how='left', suffixes=('', '_NE'))
+    result = mapped_df.merge(ne_lookup, on=['Mobile', 'Year', '_Period'], how='left')
+    
+    # Clean up
+    result = result.drop(columns=['_Period'])
+    
+    return result
+
+
+def map_bhk_data(mapped_df: pd.DataFrame, bhk_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Map BHK data columns to mapped data based on mobile number and 2-month period.
+    Uses left join to keep all records.
+    Deduplicates BHK data keeping the oldest PACKAGE_NAME per 2-month group.
+    
+    Args:
+        mapped_df: GA-SF mapped DataFrame with Mobile, Month, Year columns
+        bhk_df: BHK DataFrame with Mobile, OPP_CREATED_DATE, PACKAGE_NAME
+        
+    Returns:
+        DataFrame with PACKAGE_NAME mapped
+    """
+    if bhk_df is None or bhk_df.empty:
+        return mapped_df
+    
+    mapped_df = mapped_df.copy()
+    bhk_df = bhk_df.copy()
+    
+    # Standardize column names
+    col_mapping = {col.upper(): col for col in bhk_df.columns}
+    if 'LEAD_MOBILE' in col_mapping and 'Mobile' not in bhk_df.columns:
+        bhk_df = bhk_df.rename(columns={col_mapping['LEAD_MOBILE']: 'Mobile'})
+    if 'MOBILE' in col_mapping and 'Mobile' not in bhk_df.columns:
+        bhk_df = bhk_df.rename(columns={col_mapping['MOBILE']: 'Mobile'})
+    if 'OPP_CREATED_DATE' in col_mapping:
+         bhk_df = bhk_df.rename(columns={col_mapping['OPP_CREATED_DATE']: 'OPP_CREATED_DATE'})
+    if 'PACKAGE_NAME' in col_mapping:
+         bhk_df = bhk_df.rename(columns={col_mapping['PACKAGE_NAME']: 'PACKAGE_NAME'})
+    
+    # Ensure Mobile is string
+    bhk_df['Mobile'] = bhk_df['Mobile'].astype(str)
+    
+    # Keep only necessary columns
+    required_cols = ['OPP_CREATED_DATE', 'PACKAGE_NAME', 'Mobile']
+    available_cols = [c for c in required_cols if c in bhk_df.columns]
+    bhk_df = bhk_df[available_cols].copy()
+    
+    if 'OPP_CREATED_DATE' not in bhk_df.columns or 'PACKAGE_NAME' not in bhk_df.columns:
+        raise ValueError("BHK file must contain 'OPP_CREATED_DATE' and 'PACKAGE_NAME' columns.")
+    
+    # Parse date (Format: DD-MM-YYYY)
+    bhk_df['OPP_CREATED_DATE'] = pd.to_datetime(bhk_df['OPP_CREATED_DATE'], format='%d-%m-%Y', errors='coerce')
+    
+    # Create period-year columns for deduplication
+    bhk_df['_Year'] = bhk_df['OPP_CREATED_DATE'].dt.year
+    bhk_df['_Period'] = bhk_df['OPP_CREATED_DATE'].dt.month.apply(lambda x: get_bimonth_period(x) if pd.notna(x) else 0)
+    
+    # Sort by Mobile, Year, Period, Date (ascending for oldest)
+    bhk_df = bhk_df.sort_values(['Mobile', '_Year', '_Period', 'OPP_CREATED_DATE'], ascending=True)
+    
+    # Deduplicate keeping oldest classification
+    bhk_df = bhk_df.drop_duplicates(subset=['Mobile', '_Year', '_Period'], keep='first')
+    
+    # Prepare mapped_df for joining
+    if 'Month' not in mapped_df.columns or 'Year' not in mapped_df.columns:
+         mapped_df = add_month_year_columns(mapped_df)
+    
+    mapped_df['_Period'] = mapped_df['Month'].apply(lambda x: get_bimonth_period(x) if pd.notna(x) else 0)
+    bhk_lookup = bhk_df[['Mobile', '_Year', '_Period', 'PACKAGE_NAME']].rename(columns={'_Year': 'Year'})
+    
+    # Merge using left join
+    result = mapped_df.merge(bhk_lookup, on=['Mobile', 'Year', '_Period'], how='left')
+    
+    # Clean up
+    result = result.drop(columns=['_Period'])
     
     return result
 
